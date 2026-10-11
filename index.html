@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>流程图绘制器</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="app">
+
+  <header class="topbar">
+    <div class="brand">
+      <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+        <rect x="2.5" y="2.5" width="8" height="6" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.6"/>
+        <rect x="13.5" y="15.5" width="8" height="6" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.6"/>
+        <path d="M6.5 8.5V12h11V15.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+      </svg>
+      <b>流程图绘制器</b>
+    </div>
+
+    <span class="divider"></span>
+
+    <div class="tgroup">
+      <button class="btn" id="btn-new" title="新建空白画布 (Ctrl+Alt+N)">新建</button>
+      <button class="btn" id="btn-open" title="打开 JSON 文件">打开</button>
+      <button class="btn" id="btn-save" title="保存为 JSON 文件 (Ctrl+S)">保存</button>
+      <div class="menu-wrap">
+        <button class="btn" id="btn-export" aria-haspopup="true" aria-expanded="false">导出 <span class="caret"></span></button>
+        <div class="menu" id="menu-export" hidden>
+          <button data-export="svg">导出 SVG 矢量图</button>
+          <button data-export="png">导出 PNG 图片</button>
+          <button data-export="json">导出 JSON 数据</button>
+        </div>
+      </div>
+    </div>
+
+    <span class="divider"></span>
+
+    <div class="tgroup">
+      <button class="icon-btn" id="btn-undo" title="撤销 (Ctrl+Z)">
+        <svg viewBox="0 0 24 24" width="17" height="17"><path d="M9 7H15.5a4.5 4.5 0 0 1 0 9H10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M11.5 4.5 8.5 7l3 2.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+      <button class="icon-btn" id="btn-redo" title="重做 (Ctrl+Shift+Z)">
+        <svg viewBox="0 0 24 24" width="17" height="17"><path d="M15 7H8.5a4.5 4.5 0 0 0 0 9H14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M12.5 4.5 15.5 7l-3 2.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+      <button class="icon-btn" id="btn-copy" title="复制并粘贴一份 (Ctrl+D)">
+        <svg viewBox="0 0 24 24" width="17" height="17"><rect x="8.5" y="8.5" width="11" height="11" rx="2" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M15.5 6.2A2.2 2.2 0 0 0 13.3 4H6.2A2.2 2.2 0 0 0 4 6.2v7.1a2.2 2.2 0 0 0 2.2 2.2" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+      </button>
+      <button class="icon-btn" id="btn-delete" title="删除选中 (Delete)">
+        <svg viewBox="0 0 24 24" width="17" height="17"><path d="M5 7h14M9.5 7V5.4A1.4 1.4 0 0 1 10.9 4h2.2a1.4 1.4 0 0 1 1.4 1.4V7M7 7l1 12.1A1.4 1.4 0 0 0 9.4 20.4h5.2A1.4 1.4 0 0 0 16 19.1L17 7" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+    </div>
+
+    <div class="spacer"></div>
+
+    <div class="tgroup">
+      <button class="icon-btn" id="btn-fit" title="适应窗口 (Ctrl+0)">
+        <svg viewBox="0 0 24 24" width="17" height="17"><path d="M4 9V5.6A1.6 1.6 0 0 1 5.6 4H9M15 4h3.4A1.6 1.6 0 0 1 20 5.6V9M20 15v3.4a1.6 1.6 0 0 1-1.6 1.6H15M9 20H5.6A1.6 1.6 0 0 1 4 18.4V15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+      </button>
+      <button class="icon-btn" id="btn-zoom-out" title="缩小">
+        <svg viewBox="0 0 24 24" width="17" height="17"><path d="M5 12h14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>
+      </button>
+      <button class="btn ghost" id="btn-zoom-reset" title="重置缩放">100%</button>
+      <button class="icon-btn" id="btn-zoom-in" title="放大">
+        <svg viewBox="0 0 24 24" width="17" height="17"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>
+      </button>
+      <button class="icon-btn" id="btn-theme" title="切换深色/浅色">
+        <svg viewBox="0 0 24 24" width="17" height="17"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <div class="subbar">
+    <div class="tgroup segmented" id="toolGroup" role="tablist">
+      <button class="seg on" data-tool="select" title="选择 (V)">选择</button>
+      <button class="seg" data-tool="connect" title="连线：从组件边缘拖出箭头 (L)">连线</button>
+      <button class="seg" data-tool="pan" title="平移画布：也可按住空格或中键拖动 (H)">平移</button>
+    </div>
+
+    <span class="divider"></span>
+
+    <div class="tgroup">
+      <button class="chip on" id="tg-grid" role="switch" aria-checked="true" title="显示/隐藏网格底纹">
+        <i class="dot"></i>网格底纹
+      </button>
+      <button class="chip on" id="tg-snap-grid" role="switch" aria-checked="true" title="拖动组件时吸附到网格交点">
+        <i class="dot"></i>吸附网格
+      </button>
+      <button class="chip on" id="tg-guides" role="switch" aria-checked="true" title="与其他组件对齐时自动吸附并显示参考线">
+        <i class="dot"></i>智能参考线
+      </button>
+      <button class="chip on" id="tg-ports" role="switch" aria-checked="true" title="箭头端点自动吸附到最近组件的连接点">
+        <i class="dot"></i>箭头吸附
+      </button>
+    </div>
+
+    <span class="divider"></span>
+
+    <label class="field inline">
+      <span>网格</span>
+      <select id="sel-grid-size" title="网格大小">
+        <option value="10">10</option>
+        <option value="20" selected>20</option>
+        <option value="25">25</option>
+        <option value="50">50</option>
+      </select>
+    </label>
+    <label class="field inline">
+      <span>底纹</span>
+      <select id="sel-grid-style" title="网格样式">
+        <option value="line" selected>方格</option>
+        <option value="dot">点阵</option>
+      </select>
+    </label>
+
+    <span class="divider"></span>
+
+    <div class="tgroup segmented" id="edgeModeGroup">
+      <button class="seg on" data-edge-mode="orthogonal" title="新箭头使用直角折线">折线</button>
+      <button class="seg" data-edge-mode="straight" title="新箭头使用直线">直线</button>
+      <button class="seg" data-edge-mode="curve" title="新箭头使用曲线">曲线</button>
+    </div>
+  </div>
+
+  <main class="workspace">
+    <aside class="panel left" id="panelLeft">
+      <div class="panel-head">
+        <span>组件库</span>
+        <button class="mini" id="btn-collapse-left" title="收起/展开面板">⇤</button>
+      </div>
+      <div class="panel-body">
+        <div class="section">
+          <input class="search" id="shapeSearch" type="search" placeholder="搜索组件…">
+          <div class="shape-grid" id="shapeList"></div>
+        </div>
+
+        <div class="section">
+          <div class="section-head">
+            <span>自定义组件</span>
+            <button class="mini primary" id="btn-save-shape" title="把当前选中的组件保存为可复用组件">+ 存为组件</button>
+          </div>
+          <div class="shape-grid" id="customList"></div>
+          <p class="tip" id="customEmpty">选中一个组件后点击「存为组件」，即可保存它的尺寸与样式，之后一键复用。</p>
+        </div>
+
+        <div class="section">
+          <div class="section-head"><span>示例模板</span></div>
+          <div class="stack">
+            <button class="btn wide" data-template="approval">审批流程图</button>
+            <button class="btn wide" data-template="login">登录流程图</button>
+          </div>
+        </div>
+
+        <div class="section">
+          <div class="section-head">
+            <span>我的模板</span>
+            <button class="mini primary" id="btn-save-template" title="把当前框选的组件（含它们之间的箭头）存成模板">+ 存为模板</button>
+          </div>
+          <div class="stack" id="templateList"></div>
+          <p class="tip" id="templateEmpty">框选若干组件后点「存为模板」，就能把这一组组件和它们之间的箭头整块复用。</p>
+        </div>
+      </div>
+    </aside>
+
+    <div class="canvas-wrap" id="canvasWrap">
+      <svg id="board" xmlns="http://www.w3.org/2000/svg" tabindex="0">
+        <defs id="defs"></defs>
+        <rect id="gridRect" class="grid-rect" x="0" y="0" width="100%" height="100%"></rect>
+        <g id="world">
+          <g id="layerEdges"></g>
+          <g id="layerNodes"></g>
+        </g>
+        <g id="overlay">
+          <g id="layerGuides"></g>
+          <g id="layerMarquee"></g>
+          <g id="layerHot"></g>
+          <g id="layerUi"></g>
+        </g>
+      </svg>
+      <textarea id="editor" class="inline-editor" spellcheck="false" hidden></textarea>
+      <div class="menu ctx-menu" id="contextMenu" hidden></div>
+      <div class="status-pill" id="pillHint">从左侧拖入组件，或在画布上框选</div>
+      <div class="drop-veil" id="dropVeil" hidden><span>松开以放置组件</span></div>
+    </div>
+
+    <aside class="panel right" id="panelRight">
+      <div class="panel-body">
+
+        <div class="props" id="propsNone">
+          <div class="section-head"><span>画布设置</span></div>
+          <div class="rows">
+            <label class="field"><span>网格</span><input type="number" id="cs-gridSize" min="4" max="200" step="1" value="20"><em class="unit">px</em></label>
+            <label class="field"><span>底纹</span><select id="cs-gridStyle"><option value="line">方格</option><option value="dot">点阵</option></select></label>
+            <label class="field"><span>连线</span><select id="cs-edgeMode"><option value="orthogonal">折线</option><option value="straight">直线</option><option value="curve">曲线</option></select></label>
+            <label class="field"><span>阈值</span><input type="number" id="cs-threshold" min="2" max="40" step="1" value="8"><em class="unit">px</em></label>
+          </div>
+          <div class="switch-list">
+            <button class="chip wide on" id="cs-grid" role="switch" aria-checked="true"><i class="dot"></i>显示网格底纹</button>
+            <button class="chip wide on" id="cs-snapGrid" role="switch" aria-checked="true"><i class="dot"></i>吸附到网格</button>
+            <button class="chip wide on" id="cs-guides" role="switch" aria-checked="true"><i class="dot"></i>智能参考线吸附</button>
+            <button class="chip wide on" id="cs-ports" role="switch" aria-checked="true"><i class="dot"></i>箭头吸附到组件</button>
+          </div>
+          <p class="tip">提示：勾选「智能参考线」后，拖动组件会与其他组件的边缘/中心自动对齐；关闭「吸附网格」可自由摆放。</p>
+        </div>
+
+        <div class="props" id="propsNode" hidden>
+          <div class="section-head"><span>组件</span></div>
+          <div class="rows">
+            <label class="field"><span>形状</span><select id="np-shape"></select></label>
+            <label class="field"><span>X</span><input type="number" id="np-x" step="1"><em class="unit">px</em></label>
+            <label class="field"><span>Y</span><input type="number" id="np-y" step="1"><em class="unit">px</em></label>
+            <label class="field"><span>宽度</span><input type="number" id="np-w" min="16" step="1"><em class="unit">px</em></label>
+            <label class="field"><span>高度</span><input type="number" id="np-h" min="16" step="1"><em class="unit">px</em></label>
+          </div>
+          <div class="row-inline">
+            <button class="mini" id="np-fit">适应文字</button>
+            <button class="mini" id="np-size-1">140×64</button>
+            <button class="mini" id="np-size-2">200×100</button>
+          </div>
+          <label class="check"><input type="checkbox" id="np-lockRatio"><span>锁定宽高比</span></label>
+
+          <div class="section-head mt"><span>外观</span></div>
+          <div class="rows">
+            <label class="field"><span>填充</span><input type="color" id="np-fill"></label>
+            <label class="field"><span>描边</span><input type="color" id="np-stroke"></label>
+            <label class="field"><span>线宽</span><input type="number" id="np-strokeWidth" min="0" max="12" step="0.5"></label>
+            <label class="field"><span>圆角</span><input type="number" id="np-radius" min="0" max="80" step="1"><em class="unit">px</em></label>
+            <label class="field"><span>边框</span><select id="np-dash"><option value="">实线</option><option value="6 4">虚线</option><option value="2 4">点线</option></select></label>
+          </div>
+          <div class="row-inline">
+            <button class="mini" id="np-noFill">无填充</button>
+            <button class="mini" id="np-noStroke">无边框</button>
+            <button class="mini" id="np-shadow">阴影</button>
+          </div>
+
+          <div class="section-head mt"><span>文字</span></div>
+          <div class="rows">
+            <label class="field"><span>字号</span><input type="number" id="np-fontSize" min="8" max="72" step="1"></label>
+            <label class="field"><span>颜色</span><input type="color" id="np-fontColor"></label>
+            <label class="field"><span>对齐</span><select id="np-align"><option value="center">居中</option><option value="left">左对齐</option><option value="right">右对齐</option></select></label>
+          </div>
+          <div class="row-inline">
+            <button class="mini" id="np-bold"><b>B</b> 加粗</button>
+            <button class="mini" id="np-italic"><i>I</i> 斜体</button>
+          </div>
+
+          <div class="section-head mt"><span>层级与对齐</span></div>
+          <div class="row-inline">
+            <button class="mini" id="np-front">置顶</button>
+            <button class="mini" id="np-back">置底</button>
+            <button class="mini" id="np-lock">锁定位置</button>
+          </div>
+          <div class="row-inline" id="alignRow">
+            <button class="mini" data-align="left" title="左对齐">⇤</button>
+            <button class="mini" data-align="hcenter" title="水平居中">⇹</button>
+            <button class="mini" data-align="right" title="右对齐">⇥</button>
+            <button class="mini" data-align="top" title="顶对齐">⤒</button>
+            <button class="mini" data-align="vcenter" title="垂直居中">⇳</button>
+            <button class="mini" data-align="bottom" title="底对齐">⤓</button>
+            <button class="mini" data-align="dist-h" title="水平方向等间距分布">横向均分</button>
+            <button class="mini" data-align="dist-v" title="垂直方向等间距分布">纵向均分</button>
+          </div>
+        </div>
+
+        <div class="props" id="propsEdge" hidden>
+          <div class="section-head"><span>箭头</span></div>
+          <div class="rows">
+            <label class="field"><span>类型</span><select id="ep-mode"><option value="orthogonal">折线</option><option value="straight">直线</option><option value="curve">曲线</option></select></label>
+            <label class="field"><span>标签</span><input type="text" id="ep-label" placeholder="可选文字"></label>
+            <label class="field"><span>颜色</span><input type="color" id="ep-color"></label>
+            <label class="field"><span>线宽</span><input type="number" id="ep-strokeWidth" min="0.5" max="10" step="0.5"></label>
+            <label class="field"><span>线条</span><select id="ep-dash"><option value="">实线</option><option value="6 4">虚线</option><option value="2 4">点线</option></select></label>
+          </div>
+          <div class="row-inline">
+            <button class="mini" id="ep-arrowEnd">末端箭头</button>
+            <button class="mini" id="ep-arrowStart">起始箭头</button>
+          </div>
+          <div class="section-head mt"><span>端点连接</span></div>
+          <div class="rows">
+            <label class="field"><span>起点</span><select id="ep-from-port"><option value="auto">自动</option><option value="t">上</option><option value="r">右</option><option value="b">下</option><option value="l">左</option><option value="free">自由位置</option></select></label>
+            <label class="field"><span>终点</span><select id="ep-to-port"><option value="auto">自动</option><option value="t">上</option><option value="r">右</option><option value="b">下</option><option value="l">左</option><option value="free">自由位置</option></select></label>
+          </div>
+          <div class="row-inline">
+            <button class="mini" id="ep-reverse">反转方向</button>
+          </div>
+        </div>
+
+      </div>
+    </aside>
+  </main>
+
+  <footer class="statusbar">
+    <span id="stSelection">未选中</span>
+    <span class="divider"></span>
+    <span id="stPointer">x: 0, y: 0</span>
+    <span class="spacer"></span>
+    <span id="stMessage" class="msg">就绪</span>
+    <span class="divider"></span>
+    <span id="stZoom">100%</span>
+  </footer>
+</div>
+
+<input type="file" id="fileInput" accept=".json,application/json" hidden>
+
+<script src="src/geom.js"></script>
+<script src="src/router.js"></script>
+<script src="src/snap.js"></script>
+<script src="src/store.js"></script>
+<script src="src/view.js"></script>
+<script src="src/templates.js"></script>
+<script src="src/app.js"></script>
+</body>
+</html>

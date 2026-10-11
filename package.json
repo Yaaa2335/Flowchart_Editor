@@ -1,0 +1,13 @@
+{
+  "name": "flowchart-painter",
+  "version": "1.0.0",
+  "private": true,
+  "description": "纯 HTML/CSS/JS 流程图绘制器：可开关网格底纹、组件与箭头自动吸附、自定义组件尺寸",
+  "scripts": {
+    "build": "node tools/bundle.js",
+    "test": "node tools/bundle.js && node tests/all.js",
+    "test:unit": "node tests/selftest.js",
+    "test:dom": "node tests/browser.js",
+    "test:bundle": "node tests/browser.js 流程图绘制器.html"
+  }
+}
