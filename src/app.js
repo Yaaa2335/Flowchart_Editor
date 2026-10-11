@@ -18,6 +18,7 @@
   var tabs = [];                      // 多画板：[{id, name, store}]
   var activeTabId = null;
   var draggingTemplate = null;
+  var draggingShape = null;
 
   function el(id) { return document.getElementById(id); }
   function closest(node, sel) { return node && node.closest ? node.closest(sel) : null; }
@@ -322,8 +323,13 @@
       e.dataTransfer.setData(opts.mime || 'text/fd-shape', opts.payload == null ? key : String(opts.payload));
       e.dataTransfer.setData('text/plain', key);
       e.dataTransfer.effectAllowed = 'copy';
+      draggingShape = { key: key, overrides: opts.overrides || null, name: label };
     });
-    btn.addEventListener('dragend', function () { el('dropVeil').hidden = true; });
+    btn.addEventListener('dragend', function () {
+      el('dropVeil').hidden = true;
+      draggingShape = null;
+      view.setPreview([]);
+    });
     btn.addEventListener('click', function () {
       if (opts.onClick) { opts.onClick(); return; }
       var pos = viewportCenterWorld();
@@ -347,6 +353,19 @@
   }
 
   function addShapeAt(key, wx, wy, overrides, silent) {
+    var node = plannedNode(key, wx, wy, overrides);
+    if (!silent) {
+      store.addNode(node);
+      store.selectNodes([node.id]);
+      store.commit();
+      render();
+      msg('已添加「' + G.getShape(key).name + '」');
+    }
+    return node;
+  }
+
+  /** 计算新建组件最终会落在哪里（预览与真正创建走同一条计算，保证所见即所得）。 */
+  function plannedNode(key, wx, wy, overrides) {
     var node = store.makeNode(key, wx, wy, overrides);
     if (state.settings.snapGrid) {
       var g = state.settings.gridSize;
@@ -357,13 +376,6 @@
       }
       node.x = Math.round((wx - node.w / 2) / g) * g;
       node.y = Math.round((wy - node.h / 2) / g) * g;
-    }
-    if (!silent) {
-      store.addNode(node);
-      store.selectNodes([node.id]);
-      store.commit();
-      render();
-      msg('已添加「' + G.getShape(key).name + '」');
     }
     return node;
   }
@@ -515,8 +527,8 @@
   }
 
   /** 把模板整块插入画布，中心对齐到 (wx, wy)。 */
-  function insertTemplate(tpl, wx, wy) {
-    if (!tpl || !tpl.nodes || !tpl.nodes.length) return;
+  /** 模板整块会落在哪里（预览与实际插入共用）。 */
+  function plannedTemplate(tpl, wx, wy) {
     var box = G.unionRects(tpl.nodes);
     var ox = wx - (box.x + box.w / 2);
     var oy = wy - (box.y + box.h / 2);
@@ -525,6 +537,21 @@
       ox = Math.round(ox / g) * g;
       oy = Math.round(oy / g) * g;
     }
+    return {
+      ox: ox, oy: oy,
+      shapes: tpl.nodes.map(function (n) {
+        return {
+          shape: n.shape, x: n.x + ox, y: n.y + oy, w: n.w, h: n.h,
+          radius: n.style ? n.style.radius : null
+        };
+      })
+    };
+  }
+
+  function insertTemplate(tpl, wx, wy) {
+    if (!tpl || !tpl.nodes || !tpl.nodes.length) return;
+    var plan = plannedTemplate(tpl, wx, wy);
+    var ox = plan.ox, oy = plan.oy;
     var map = {};
     var newNodes = [];
     tpl.nodes.forEach(function (raw) {
@@ -1181,6 +1208,12 @@
     if (!edge) return;
     var w = pointerWorld(e);
     edge.labelPos = { x: Math.round(w.x * 10) / 10, y: Math.round(w.y * 10) / 10 };
+    // 拖动时用虚线指回它对应的箭头（松手后消失）
+    var geo = geoOfEdge(edge);
+    view.setOverlay({
+      view: state.view,
+      link: geo ? { from: edge.labelPos, to: geo.label } : null
+    });
     render();
   }
 
@@ -1845,23 +1878,21 @@
       var veil = el('dropVeil');
       var caption = veil.querySelector('span');
       if (draggingTemplate) {
-        // 拖动示例模板时给出落点预览
+        // 拖动示例模板：按真实形状显示落点预览
         var tpl = window.FD.templates.build(draggingTemplate.key);
-        var box = tpl ? G.unionRects(tpl.nodes) : null;
-        if (box) {
-          var pt = pointerWorld(e);
-          var ox = pt.x - (box.x + box.w / 2), oy = pt.y - (box.y + box.h / 2);
-          if (state.settings.snapGrid) {
-            var g = state.settings.gridSize;
-            ox = Math.round(ox / g) * g;
-            oy = Math.round(oy / g) * g;
-          }
-          view.setOverlay({
-            view: state.view,
-            ghost: { node: { x: box.x + ox, y: box.y + oy, w: box.w, h: box.h } }
-          });
+        if (tpl) {
+          var ptT = pointerWorld(e);
+          view.setPreview(plannedTemplate(tpl, ptT.x, ptT.y).shapes);
         }
         if (caption) caption.textContent = '松开把模板「' + draggingTemplate.name + '」放到这里';
+      } else if (draggingShape) {
+        var ptS = pointerWorld(e);
+        var planned = plannedNode(draggingShape.key, ptS.x, ptS.y, draggingShape.overrides);
+        view.setPreview([{
+          shape: planned.shape, x: planned.x, y: planned.y, w: planned.w, h: planned.h,
+          radius: planned.style ? planned.style.radius : null
+        }]);
+        if (caption) caption.textContent = '松开放置「' + draggingShape.name + '」';
       } else if (caption) {
         caption.textContent = '松开以放置组件';
       }
@@ -1871,11 +1902,14 @@
       if (e.relatedTarget && wrap.contains(e.relatedTarget)) return;
       el('dropVeil').hidden = true;
       view.setOverlay({ view: state.view });
+      view.setPreview([]);
     });
     wrap.addEventListener('drop', function (e) {
       e.preventDefault();
       el('dropVeil').hidden = true;
       view.setOverlay({ view: state.view });
+      view.setPreview([]);
+      draggingShape = null;
       var pt = pointerWorld(e);
       var tplKey = e.dataTransfer.getData('text/fd-template-key') ||
         (draggingTemplate && draggingTemplate.key);

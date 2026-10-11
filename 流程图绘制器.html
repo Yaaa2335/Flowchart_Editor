@@ -496,6 +496,8 @@ input[type="color"]::-webkit-color-swatch { border: none; border-radius: 4px; }
 
 .ghost-edge { fill: none; stroke: var(--accent); stroke-width: 1.8; stroke-dasharray: 6 4; pointer-events: none; vector-effect: non-scaling-stroke; }
 .ghost-node { fill: none; stroke: var(--accent); stroke-width: 1.5; stroke-dasharray: 6 4; pointer-events: none; opacity: .9; vector-effect: non-scaling-stroke; }
+.ghost-shape { fill: none; stroke: var(--accent); stroke-width: 1.6; stroke-dasharray: 6 4; pointer-events: none; vector-effect: non-scaling-stroke; }
+.label-link { stroke: var(--accent); stroke-width: 1.3; stroke-dasharray: 4 3; pointer-events: none; vector-effect: non-scaling-stroke; opacity: .85; }
 
 .inline-editor {
   position: absolute;
@@ -724,6 +726,7 @@ input[type="color"]::-webkit-color-swatch { border: none; border-radius: 4px; }
         <g id="world">
           <g id="layerEdges"></g>
           <g id="layerNodes"></g>
+          <g id="layerGhost"></g>
         </g>
         <g id="overlay">
           <g id="layerGuides"></g>
@@ -1591,6 +1594,23 @@ input[type="color"]::-webkit-color-swatch { border: none; border-radius: 4px; }
     return false;
   }
 
+  /** 两条折线是否相交（用于挑一个不会和同伴撞上的错开方向）。 */
+  function polylineCrosses(p, q) {
+    return crossCount(p, q) > 0;
+  }
+
+  /** 两条折线的交点个数。 */
+  function crossCount(p, q) {
+    var n = 0;
+    for (var i = 1; i < p.length; i++) {
+      for (var j = 1; j < q.length; j++) {
+        if (segmentsIntersect(p[i - 1].x, p[i - 1].y, p[i].x, p[i].y,
+          q[j - 1].x, q[j - 1].y, q[j].x, q[j].y)) n++;
+      }
+    }
+    return n;
+  }
+
   /** 收集需要避开的组件（排除连线两端的组件）。 */
   function obstaclesFor(edge, nodes) {
     var skipA = edge.from && edge.from.node, skipB = edge.to && edge.to.node;
@@ -1623,6 +1643,20 @@ input[type="color"]::-webkit-color-swatch { border: none; border-radius: 4px; }
    * 稀疏网格上的 A* 寻路：在"绕得开"的前提下找一条正交折线。
    * 候选网格线取自两端点与各组件的外扩边界，代价里加了转弯惩罚，走线不会碎成锯齿。
    */
+  // 同一对组件共用同一条中心线路径（缓存），否则两根箭头会各自找到不同的通道
+  var routeCache = {};
+  var routeCacheCount = 0;
+
+  function cachedCenterRoute(cacheKey, from, to, rects) {
+    var cached = routeCache[cacheKey];
+    if (cached !== undefined) return cached;
+    if (routeCacheCount > 400) { routeCache = {}; routeCacheCount = 0; }
+    var path = gridRoute(from.x, from.y, to.x, to.y, rects);
+    routeCache[cacheKey] = path || null;
+    routeCacheCount++;
+    return routeCache[cacheKey];
+  }
+
   function gridRoute(sx, sy, ex, ey, obstacles, limit) {
     if (!obstacles.length) return null;
     var xs = {}, ys = {};
@@ -1677,7 +1711,7 @@ input[type="color"]::-webkit-color-swatch { border: none; border-radius: 4px; }
     var closed = new Array(W * H);
     var open = [startIdx];
     g[startIdx] = 0;
-    var turnPenalty = 26;
+    var turnPenalty = 40;
     var cx0 = Math.min(sx, ex), cx1 = Math.max(sx, ex);
     var cy0 = Math.min(sy, ey), cy1 = Math.max(sy, ey);
     var midX = (sx + ex) / 2, midY = (sy + ey) / 2;
@@ -1689,8 +1723,9 @@ input[type="color"]::-webkit-color-swatch { border: none; border-radius: 4px; }
     }
 
     // 让路径尽量靠向两端点的中间，走线看起来是对称的，而不是贴着某一侧的组件
+    // （系数要小于转弯惩罚，否则会为了"靠近中间"多拐几个弯）
     function offMiddle(px, py) {
-      return Math.abs(px - midX) * 0.35 + Math.abs(py - midY) * 0.35;
+      return Math.abs(px - midX) * 0.3 + Math.abs(py - midY) * 0.3;
     }
 
     while (open.length) {
@@ -1876,7 +1911,11 @@ input[type="color"]::-webkit-color-swatch { border: none; border-radius: 4px; }
       offB = off * outwardSign(b, a, sideB);
     }
     var pa = offPort(a, sideA, offA), pb = offPort(b, sideB, offB);
+    var pa0 = G.portPoint(a, sideA), pb0 = G.portPoint(b, sideB);
     var da = stub(pa, sideA, stubLen), db = stub(pb, sideB, stubLen);
+    var da0 = stub(pa0, sideA, stubLen), db0 = stub(pb0, sideB, stubLen);
+    var shiftA = { x: pa.x - pa0.x, y: pa.y - pa0.y };
+    var shiftB = { x: pb.x - pb0.x, y: pb.y - pb0.y };
     var pts, bend = null;
 
     if (horizA && horizB) {
@@ -1979,9 +2018,40 @@ input[type="color"]::-webkit-color-swatch { border: none; border-radius: 4px; }
       needRoute = polylineHits(pts.slice(1, pts.length - 1), allRects);
     }
     if (needRoute) {
-      var grid = gridRoute(da.x, da.y, db.x, db.y, allRects);
+      // 两端偏移量相同的（端口相对的那种）先用中心线寻路，再把整条路径平移出平行线，
+      // 否则同一对组件的两根箭头会各自选中同一条通道、中间段叠在一起。
+      var uniform = Math.abs(shiftA.x - shiftB.x) < 1e-6 && Math.abs(shiftA.y - shiftB.y) < 1e-6;
+      var from = uniform ? da0 : da, to = uniform ? db0 : db;
+      // 同一对组件的两根箭头必须共用同一条中心线，否则它们会各选一条通道
+      var forward = (from.x + from.y * 1000) <= (to.x + to.y * 1000);
+      var a1 = forward ? from : to, b1 = forward ? to : from;
+      var canonKey = (opts.groupKey || edge.id) + '|' +
+        [a1.x, a1.y, b1.x, b1.y].map(function (v) { return Math.round(v * 10); }).join(',');
+      var base = cachedCenterRoute(canonKey, a1, b1, allRects);
+      var grid = base ? (forward ? base : base.slice().reverse()) : null;
       if (grid && grid.length > 1) {
-        pts = G.simplify([pa, da].concat(grid, [db, pb]));
+        var mag = Math.max(Math.abs(shiftA.x), Math.abs(shiftA.y));
+        if (uniform && mag > 0.5) {
+          // 两根箭头共用同一条中心线，但各往对角线方向错开：
+          // 只沿端口方向平移的话，折线的中间竖段会重叠。
+          var s = Math.abs(shiftA.y) >= Math.abs(shiftA.x) ? Math.sign(shiftA.y) : Math.sign(shiftA.x);
+          if (!s) s = 1;
+          var cands = [[s * mag, s * mag], [s * mag, -s * mag]];
+          var pick = cands[0];
+          var bestCross = Infinity;
+          for (var ci = 0; ci < cands.length; ci++) {
+            var oa = grid.map(function (p) { return { x: p.x + cands[ci][0], y: p.y + cands[ci][1] }; });
+            var ob = grid.map(function (p) { return { x: p.x - cands[ci][0], y: p.y - cands[ci][1] }; });
+            var n = crossCount(oa, ob);
+            if (n < bestCross) { bestCross = n; pick = cands[ci]; }
+          }
+          var routed = grid.map(function (p) { return { x: p.x + pick[0], y: p.y + pick[1] }; });
+          var first = routed[0], last = routed[routed.length - 1];
+          pts = G.simplify([pa, da, { x: first.x, y: da.y }]
+            .concat(routed, [{ x: last.x, y: db.y }, db, pb]));
+        } else {
+          pts = G.simplify([pa].concat(grid, [pb]));
+        }
         bend = null;
       }
     }
@@ -2026,7 +2096,8 @@ input[type="color"]::-webkit-color-swatch { border: none; border-radius: 4px; }
     var o = {
       offset: opts.offset || 0, slot: opts.slot || 0, stub: opts.stub,
       obstacles: opts.obstacles || obstaclesFor(edge, nodes),
-      avoidAll: opts.avoidAll || allRectsOf(nodes)
+      avoidAll: opts.avoidAll || allRectsOf(nodes),
+      groupKey: opts.groupKey || groupKeyOf(edge, nodes)
     };
     if (mode === 'straight') return straightGeom(a, b, edge, o);
     if (mode === 'curve') return curveGeom(a, b, edge, o);
@@ -2791,6 +2862,7 @@ input[type="color"]::-webkit-color-swatch { border: none; border-radius: 4px; }
     var world = svg.querySelector('#world');
     var layerEdges = svg.querySelector('#layerEdges');
     var layerNodes = svg.querySelector('#layerNodes');
+    var layerGhost = svg.querySelector('#layerGhost');
     var layerGuides = svg.querySelector('#layerGuides');
     var layerMarquee = svg.querySelector('#layerMarquee');
     var layerUi = svg.querySelector('#layerUi');
@@ -3182,10 +3254,30 @@ input[type="color"]::-webkit-color-swatch { border: none; border-radius: 4px; }
 
     /* ---------- 临时覆盖层 ---------- */
 
+    var previewSig = null;
+
+    /** 拖放预览：用真实形状的虚线轮廓显示松手后会落在哪里。 */
+    function setPreview(nodes) {
+      var list = nodes || [];
+      var sig = JSON.stringify(list.map(function (n) {
+        return [n.shape, G.f(n.x), G.f(n.y), G.f(n.w), G.f(n.h), G.f(n.radius || 0)];
+      }));
+      if (sig === previewSig) return;
+      previewSig = sig;
+      clear(layerGhost);
+      list.forEach(function (n) {
+        var shape = G.getShape(n.shape);
+        var d = shape.noShape ? '' : shape.draw(n.x, n.y, n.w, n.h, n.radius || 0, shape);
+        if (!d) return;
+        layerGhost.appendChild(mk('path', { class: 'ghost-shape', d: d }));
+      });
+    }
+
     function setOverlay(o) {
       o = o || {};
       var sig = JSON.stringify([
         o.guides || [], o.marquee || null, o.ghost || null, o.hotPort || null, o.hotNode || null,
+        o.link ? [G.round2(o.link.from.x), G.round2(o.link.from.y), G.round2(o.link.to.x), G.round2(o.link.to.y)] : null,
         o.view ? [o.view.x, o.view.y, o.view.zoom] : null
       ]);
       if (sig === hotSig) return;
@@ -3247,6 +3339,12 @@ input[type="color"]::-webkit-color-swatch { border: none; border-radius: 4px; }
           class: 'anchor-halo', cx: G.f(hp.x), cy: G.f(hp.y), r: 11
         }));
         layerHot.appendChild(mk('circle', { class: 'anchor-dot', cx: G.f(hp.x), cy: G.f(hp.y), r: 4.5 }));
+      }
+      if (o.link) {
+        var la = w2s(o.link.from, view), lb = w2s(o.link.to, view);
+        layerHot.appendChild(mk('line', {
+          class: 'label-link', x1: G.f(la.x), y1: G.f(la.y), x2: G.f(lb.x), y2: G.f(lb.y)
+        }));
       }
     }
 
@@ -3329,7 +3427,7 @@ input[type="color"]::-webkit-color-swatch { border: none; border-radius: 4px; }
     }
 
     return {
-      render: render, setOverlay: setOverlay, applyView: applyView,
+      render: render, setOverlay: setOverlay, setPreview: setPreview, applyView: applyView,
       rectToScreen: rectToScreen, w2s: w2s,
       invalidateChrome: function () { uiSig = null; },
       invalidateOverlay: function () { hotSig = null; },
@@ -3467,6 +3565,7 @@ input[type="color"]::-webkit-color-swatch { border: none; border-radius: 4px; }
   var tabs = [];                      // 多画板：[{id, name, store}]
   var activeTabId = null;
   var draggingTemplate = null;
+  var draggingShape = null;
 
   function el(id) { return document.getElementById(id); }
   function closest(node, sel) { return node && node.closest ? node.closest(sel) : null; }
@@ -3771,8 +3870,13 @@ input[type="color"]::-webkit-color-swatch { border: none; border-radius: 4px; }
       e.dataTransfer.setData(opts.mime || 'text/fd-shape', opts.payload == null ? key : String(opts.payload));
       e.dataTransfer.setData('text/plain', key);
       e.dataTransfer.effectAllowed = 'copy';
+      draggingShape = { key: key, overrides: opts.overrides || null, name: label };
     });
-    btn.addEventListener('dragend', function () { el('dropVeil').hidden = true; });
+    btn.addEventListener('dragend', function () {
+      el('dropVeil').hidden = true;
+      draggingShape = null;
+      view.setPreview([]);
+    });
     btn.addEventListener('click', function () {
       if (opts.onClick) { opts.onClick(); return; }
       var pos = viewportCenterWorld();
@@ -3796,6 +3900,19 @@ input[type="color"]::-webkit-color-swatch { border: none; border-radius: 4px; }
   }
 
   function addShapeAt(key, wx, wy, overrides, silent) {
+    var node = plannedNode(key, wx, wy, overrides);
+    if (!silent) {
+      store.addNode(node);
+      store.selectNodes([node.id]);
+      store.commit();
+      render();
+      msg('已添加「' + G.getShape(key).name + '」');
+    }
+    return node;
+  }
+
+  /** 计算新建组件最终会落在哪里（预览与真正创建走同一条计算，保证所见即所得）。 */
+  function plannedNode(key, wx, wy, overrides) {
     var node = store.makeNode(key, wx, wy, overrides);
     if (state.settings.snapGrid) {
       var g = state.settings.gridSize;
@@ -3806,13 +3923,6 @@ input[type="color"]::-webkit-color-swatch { border: none; border-radius: 4px; }
       }
       node.x = Math.round((wx - node.w / 2) / g) * g;
       node.y = Math.round((wy - node.h / 2) / g) * g;
-    }
-    if (!silent) {
-      store.addNode(node);
-      store.selectNodes([node.id]);
-      store.commit();
-      render();
-      msg('已添加「' + G.getShape(key).name + '」');
     }
     return node;
   }
@@ -3964,8 +4074,8 @@ input[type="color"]::-webkit-color-swatch { border: none; border-radius: 4px; }
   }
 
   /** 把模板整块插入画布，中心对齐到 (wx, wy)。 */
-  function insertTemplate(tpl, wx, wy) {
-    if (!tpl || !tpl.nodes || !tpl.nodes.length) return;
+  /** 模板整块会落在哪里（预览与实际插入共用）。 */
+  function plannedTemplate(tpl, wx, wy) {
     var box = G.unionRects(tpl.nodes);
     var ox = wx - (box.x + box.w / 2);
     var oy = wy - (box.y + box.h / 2);
@@ -3974,6 +4084,21 @@ input[type="color"]::-webkit-color-swatch { border: none; border-radius: 4px; }
       ox = Math.round(ox / g) * g;
       oy = Math.round(oy / g) * g;
     }
+    return {
+      ox: ox, oy: oy,
+      shapes: tpl.nodes.map(function (n) {
+        return {
+          shape: n.shape, x: n.x + ox, y: n.y + oy, w: n.w, h: n.h,
+          radius: n.style ? n.style.radius : null
+        };
+      })
+    };
+  }
+
+  function insertTemplate(tpl, wx, wy) {
+    if (!tpl || !tpl.nodes || !tpl.nodes.length) return;
+    var plan = plannedTemplate(tpl, wx, wy);
+    var ox = plan.ox, oy = plan.oy;
     var map = {};
     var newNodes = [];
     tpl.nodes.forEach(function (raw) {
@@ -4630,6 +4755,12 @@ input[type="color"]::-webkit-color-swatch { border: none; border-radius: 4px; }
     if (!edge) return;
     var w = pointerWorld(e);
     edge.labelPos = { x: Math.round(w.x * 10) / 10, y: Math.round(w.y * 10) / 10 };
+    // 拖动时用虚线指回它对应的箭头（松手后消失）
+    var geo = geoOfEdge(edge);
+    view.setOverlay({
+      view: state.view,
+      link: geo ? { from: edge.labelPos, to: geo.label } : null
+    });
     render();
   }
 
@@ -5294,23 +5425,21 @@ input[type="color"]::-webkit-color-swatch { border: none; border-radius: 4px; }
       var veil = el('dropVeil');
       var caption = veil.querySelector('span');
       if (draggingTemplate) {
-        // 拖动示例模板时给出落点预览
+        // 拖动示例模板：按真实形状显示落点预览
         var tpl = window.FD.templates.build(draggingTemplate.key);
-        var box = tpl ? G.unionRects(tpl.nodes) : null;
-        if (box) {
-          var pt = pointerWorld(e);
-          var ox = pt.x - (box.x + box.w / 2), oy = pt.y - (box.y + box.h / 2);
-          if (state.settings.snapGrid) {
-            var g = state.settings.gridSize;
-            ox = Math.round(ox / g) * g;
-            oy = Math.round(oy / g) * g;
-          }
-          view.setOverlay({
-            view: state.view,
-            ghost: { node: { x: box.x + ox, y: box.y + oy, w: box.w, h: box.h } }
-          });
+        if (tpl) {
+          var ptT = pointerWorld(e);
+          view.setPreview(plannedTemplate(tpl, ptT.x, ptT.y).shapes);
         }
         if (caption) caption.textContent = '松开把模板「' + draggingTemplate.name + '」放到这里';
+      } else if (draggingShape) {
+        var ptS = pointerWorld(e);
+        var planned = plannedNode(draggingShape.key, ptS.x, ptS.y, draggingShape.overrides);
+        view.setPreview([{
+          shape: planned.shape, x: planned.x, y: planned.y, w: planned.w, h: planned.h,
+          radius: planned.style ? planned.style.radius : null
+        }]);
+        if (caption) caption.textContent = '松开放置「' + draggingShape.name + '」';
       } else if (caption) {
         caption.textContent = '松开以放置组件';
       }
@@ -5320,11 +5449,14 @@ input[type="color"]::-webkit-color-swatch { border: none; border-radius: 4px; }
       if (e.relatedTarget && wrap.contains(e.relatedTarget)) return;
       el('dropVeil').hidden = true;
       view.setOverlay({ view: state.view });
+      view.setPreview([]);
     });
     wrap.addEventListener('drop', function (e) {
       e.preventDefault();
       el('dropVeil').hidden = true;
       view.setOverlay({ view: state.view });
+      view.setPreview([]);
+      draggingShape = null;
       var pt = pointerWorld(e);
       var tplKey = e.dataTransfer.getData('text/fd-template-key') ||
         (draggingTemplate && draggingTemplate.key);

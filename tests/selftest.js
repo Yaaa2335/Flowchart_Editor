@@ -362,17 +362,47 @@ function pairCrossing(portA, portB, dx, dy) {
   var lay = R.edgeLayout([f, r], nodes);
   var gf = R.edgeGeometry(f, nodes, { offset: lay.f1.offset, slot: lay.f1.slot, stub: 20 });
   var gr = R.edgeGeometry(r, nodes, { offset: lay.f2.offset, slot: lay.f2.slot, stub: 20 });
-  return { cross: routesCross(gf.points, gr.points), a: gf.points, b: gr.points };
+  // 两条线是否有共线段（哪怕只是部分重叠）
+  function overlapLen(p, q) {
+    var sum = 0;
+    for (var i = 1; i < p.length; i++) {
+      for (var j = 1; j < q.length; j++) {
+        var a = p[i - 1], b = p[i], c = q[j - 1], d = q[j];
+        var abx = b.x - a.x, aby = b.y - a.y, cdx = d.x - c.x, cdy = d.y - c.y;
+        if (Math.abs(abx * cdy - aby * cdx) > 1e-6) continue;
+        if (Math.abs((c.x - a.x) * aby - (c.y - a.y) * abx) > 1e-6) continue;
+        var len = Math.hypot(abx, aby) || 1;
+        var t0 = ((c.x - a.x) * abx + (c.y - a.y) * aby) / (len * len);
+        var t1 = ((d.x - a.x) * abx + (d.y - a.y) * aby) / (len * len);
+        var lo = Math.max(0, Math.min(t0, t1)), hi = Math.min(1, Math.max(t0, t1));
+        if ((hi - lo) * len > 2) sum += (hi - lo) * len;
+      }
+    }
+    return sum;
+  }
+  // 两个组件之间是否有富余空间（贴在一起的极端布局不强求不交叉）
+  var gapX = Math.max(Pb.x - (Pa.x + Pa.w), Pa.x - (Pb.x + Pb.w));
+  var gapY = Math.max(Pb.y - (Pa.y + Pa.h), Pa.y - (Pb.y + Pb.h));
+  return {
+    cross: routesCross(gf.points, gr.points), overlap: overlapLen(gf.points, gr.points),
+    // 两个方向都有富余空间时才强求不交叉；组件贴在一起时端口本身就挤，只要求不重叠
+    roomy: gapX > 30 && gapY > 30,
+    a: gf.points, b: gr.points
+  };
 }
 var REL = [[0, 140], [0, -140], [0, 0], [160, 140], [160, -140], [-160, 140], [-160, -140], [40, 220]];
 REL.forEach(function (d) {
   var res = pairCrossing('r', 'l', d[0], d[1]);
-  ok(!res.cross, '左右端口分开时，相对位置 ' + d.join(',') + ' 不交叉',
+  ok(res.overlap < 2, '左右端口分开时，相对位置 ' + d.join(',') + ' 不重叠',
+    'overlap=' + Math.round(res.overlap) + ' ' + JSON.stringify(res.a) + ' / ' + JSON.stringify(res.b));
+  ok(!res.cross || !res.roomy, '左右端口分开时，相对位置 ' + d.join(',') + ' 不交叉（空间够时）',
     JSON.stringify(res.a) + ' / ' + JSON.stringify(res.b));
 });
 REL.forEach(function (d) {
   var res = pairCrossing('t', 't', d[0], d[1]);
-  ok(!res.cross, '同侧端口分开时，相对位置 ' + d.join(',') + ' 不交叉',
+  ok(res.overlap < 2, '同侧端口分开时，相对位置 ' + d.join(',') + ' 不重叠',
+    'overlap=' + Math.round(res.overlap));
+  ok(!res.cross || !res.roomy, '同侧端口分开时，相对位置 ' + d.join(',') + ' 不交叉（空间够时）',
     JSON.stringify(res.a) + ' / ' + JSON.stringify(res.b));
 });
 

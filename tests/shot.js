@@ -101,7 +101,14 @@ var SETUPS = {
     's.store.commit(); s.render(); s.fitView();',
   multitab: 'var s=FD.__app; s.state.view={x:60,y:60,zoom:0.8}; s.render();' +
     's.newBoard(); s.addShapeAt("decision", 320, 240); s.addShapeAt("process", 320, 420);' +
-    's.newBoard(); document.querySelectorAll("[data-template]")[1].click();'
+    's.newBoard(); document.querySelectorAll("[data-template]")[1].click();',
+  preview: 'var s=FD.__app; s.store.reset(); s.state.view={x:120,y:80,zoom:1}; s.render();' +
+    'var board=document.getElementById("board"); var b=board.getBoundingClientRect();' +
+    'var btn=document.querySelectorAll("[data-template]")[0];' +
+    'var dt=new DataTransfer();' +
+    'btn.dispatchEvent(new DragEvent("dragstart",{bubbles:true,dataTransfer:dt}));' +
+    'board.dispatchEvent(new DragEvent("dragover",{bubbles:true,cancelable:true,' +
+    'clientX:b.left+b.width*0.45,clientY:b.top+b.height*0.4,dataTransfer:dt}));'
 };
 
 var CHROME = [

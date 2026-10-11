@@ -44,6 +44,7 @@
     var world = svg.querySelector('#world');
     var layerEdges = svg.querySelector('#layerEdges');
     var layerNodes = svg.querySelector('#layerNodes');
+    var layerGhost = svg.querySelector('#layerGhost');
     var layerGuides = svg.querySelector('#layerGuides');
     var layerMarquee = svg.querySelector('#layerMarquee');
     var layerUi = svg.querySelector('#layerUi');
@@ -435,10 +436,30 @@
 
     /* ---------- 临时覆盖层 ---------- */
 
+    var previewSig = null;
+
+    /** 拖放预览：用真实形状的虚线轮廓显示松手后会落在哪里。 */
+    function setPreview(nodes) {
+      var list = nodes || [];
+      var sig = JSON.stringify(list.map(function (n) {
+        return [n.shape, G.f(n.x), G.f(n.y), G.f(n.w), G.f(n.h), G.f(n.radius || 0)];
+      }));
+      if (sig === previewSig) return;
+      previewSig = sig;
+      clear(layerGhost);
+      list.forEach(function (n) {
+        var shape = G.getShape(n.shape);
+        var d = shape.noShape ? '' : shape.draw(n.x, n.y, n.w, n.h, n.radius || 0, shape);
+        if (!d) return;
+        layerGhost.appendChild(mk('path', { class: 'ghost-shape', d: d }));
+      });
+    }
+
     function setOverlay(o) {
       o = o || {};
       var sig = JSON.stringify([
         o.guides || [], o.marquee || null, o.ghost || null, o.hotPort || null, o.hotNode || null,
+        o.link ? [G.round2(o.link.from.x), G.round2(o.link.from.y), G.round2(o.link.to.x), G.round2(o.link.to.y)] : null,
         o.view ? [o.view.x, o.view.y, o.view.zoom] : null
       ]);
       if (sig === hotSig) return;
@@ -500,6 +521,12 @@
           class: 'anchor-halo', cx: G.f(hp.x), cy: G.f(hp.y), r: 11
         }));
         layerHot.appendChild(mk('circle', { class: 'anchor-dot', cx: G.f(hp.x), cy: G.f(hp.y), r: 4.5 }));
+      }
+      if (o.link) {
+        var la = w2s(o.link.from, view), lb = w2s(o.link.to, view);
+        layerHot.appendChild(mk('line', {
+          class: 'label-link', x1: G.f(la.x), y1: G.f(la.y), x2: G.f(lb.x), y2: G.f(lb.y)
+        }));
       }
     }
 
@@ -582,7 +609,7 @@
     }
 
     return {
-      render: render, setOverlay: setOverlay, applyView: applyView,
+      render: render, setOverlay: setOverlay, setPreview: setPreview, applyView: applyView,
       rectToScreen: rectToScreen, w2s: w2s,
       invalidateChrome: function () { uiSig = null; },
       invalidateOverlay: function () { hotSig = null; },

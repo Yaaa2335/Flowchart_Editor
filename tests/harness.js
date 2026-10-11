@@ -1171,6 +1171,16 @@
       Math.round(lblStart.x) + ' → ' + Math.round(lblNow.x));
     check('拖动标签不会改变箭头数量', st.edges.length > 0);
 
+    // 拖动过程中会有虚线指回箭头
+    var lblEl3 = labelElOf(labelEdge.id);
+    var lblMid = centerOf(lblEl3);
+    fire(lblEl3, 'pointerdown', lblMid.x, lblMid.y);
+    fire(window, 'pointermove', lblMid.x + 30, lblMid.y - 20);
+    check('拖动标签时出现指向箭头的虚线', qa('#layerHot .label-link').length === 1,
+      qa('#layerHot .label-link').length);
+    fire(window, 'pointerup', lblMid.x + 30, lblMid.y - 20);
+    check('松手后虚线消失', qa('#layerHot .label-link').length === 0);
+
     // 往组件上拖：渲染时会被推出来，保持最小间距
     var dropOnNode = centerOfNode(st.nodes.indexOf(lA));
     var lblEl2 = labelElOf(labelEdge.id);
@@ -1255,8 +1265,8 @@
     boardEl.dispatchEvent(new DragEvent('dragover', {
       bubbles: true, cancelable: true, clientX: dropPt44.x, clientY: dropPt44.y, dataTransfer: dt44
     }));
-    check('拖动模板时有落点预览', qa('#layerHot .ghost-node').length > 0,
-      qa('#layerHot .ghost-node').length);
+    check('拖动模板时按真实形状预览（7 个组件）',
+      qa('#layerGhost .ghost-shape').length === 7, qa('#layerGhost .ghost-shape').length);
     check('拖动模板的提示带模板名',
       document.getElementById('dropVeil').textContent.indexOf('模板') >= 0,
       document.getElementById('dropVeil').textContent);
@@ -1267,9 +1277,43 @@
     syncBoard();
     check('拖到画布把模板放进当前画板', st.nodes.length === nodesBefore44 + 7,
       nodesBefore44 + ' → ' + st.nodes.length);
-    check('拖放后预览消失', qa('#layerHot .ghost-node').length === 0);
+    check('拖放后预览消失', qa('#layerGhost .ghost-shape').length === 0);
     check('拖放不会多开画板', tabEls().length === tplTabs + 1, tabEls().length);
     tplBtn.dispatchEvent(new DragEvent('dragend', { bubbles: true, dataTransfer: dt44 }));
+
+    /* ---------- 45. 组件库拖放也用真实形状预览，且与实际落点一致 ---------- */
+    var shapeBtn45 = q('#shapeList .shape-btn[data-shape="decision"]');
+    var dt45 = new DataTransfer();
+    shapeBtn45.dispatchEvent(new DragEvent('dragstart', { bubbles: true, dataTransfer: dt45 }));
+    var cb45 = app.contentBounds();
+    var drop45 = toClient(cb45.x + 40, cb45.y + cb45.h + 400);
+    boardEl.dispatchEvent(new DragEvent('dragover', {
+      bubbles: true, cancelable: true, clientX: drop45.x, clientY: drop45.y, dataTransfer: dt45
+    }));
+    var ghosts45 = qa('#layerGhost .ghost-shape');
+    check('拖动组件库时有真实形状预览', ghosts45.length === 1, ghosts45.length);
+    check('拖动组件的提示带上组件名',
+      document.getElementById('dropVeil').textContent.indexOf('判断') >= 0,
+      document.getElementById('dropVeil').textContent);
+    var ghostBox45 = ghosts45[0] ? ghosts45[0].getBoundingClientRect() : null;
+    var nodesBefore45 = st.nodes.length;
+    boardEl.dispatchEvent(new DragEvent('drop', {
+      bubbles: true, cancelable: true, clientX: drop45.x, clientY: drop45.y, dataTransfer: dt45
+    }));
+    check('松手后预览清除', qa('#layerGhost .ghost-shape').length === 0);
+    check('拖放新增了组件', st.nodes.length === nodesBefore45 + 1, st.nodes.length);
+    var created45 = nodeGroups()[nodeGroups().length - 1].querySelector('path.node-shape');
+    var createdBox45 = created45.getBoundingClientRect();
+    check('预览位置与实际落点一致',
+      !!ghostBox45 &&
+      Math.abs(ghostBox45.left - createdBox45.left) < 8 &&
+      Math.abs(ghostBox45.top - createdBox45.top) < 8 &&
+      Math.abs(ghostBox45.width - createdBox45.width) < 8 &&
+      Math.abs(ghostBox45.height - createdBox45.height) < 8,
+      JSON.stringify([Math.round(ghostBox45.left), Math.round(ghostBox45.top),
+        Math.round(ghostBox45.width), Math.round(ghostBox45.height)]) + ' vs ' +
+      JSON.stringify([Math.round(createdBox45.left), Math.round(createdBox45.top),
+        Math.round(createdBox45.width), Math.round(createdBox45.height)]));
 
     /* ---------- 13. 导出 ---------- */
     // 给一条箭头加标签，用于验证导出后标签底色不会变黑

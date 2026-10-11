@@ -239,6 +239,23 @@
     return false;
   }
 
+  /** 两条折线是否相交（用于挑一个不会和同伴撞上的错开方向）。 */
+  function polylineCrosses(p, q) {
+    return crossCount(p, q) > 0;
+  }
+
+  /** 两条折线的交点个数。 */
+  function crossCount(p, q) {
+    var n = 0;
+    for (var i = 1; i < p.length; i++) {
+      for (var j = 1; j < q.length; j++) {
+        if (segmentsIntersect(p[i - 1].x, p[i - 1].y, p[i].x, p[i].y,
+          q[j - 1].x, q[j - 1].y, q[j].x, q[j].y)) n++;
+      }
+    }
+    return n;
+  }
+
   /** 收集需要避开的组件（排除连线两端的组件）。 */
   function obstaclesFor(edge, nodes) {
     var skipA = edge.from && edge.from.node, skipB = edge.to && edge.to.node;
@@ -271,6 +288,20 @@
    * 稀疏网格上的 A* 寻路：在"绕得开"的前提下找一条正交折线。
    * 候选网格线取自两端点与各组件的外扩边界，代价里加了转弯惩罚，走线不会碎成锯齿。
    */
+  // 同一对组件共用同一条中心线路径（缓存），否则两根箭头会各自找到不同的通道
+  var routeCache = {};
+  var routeCacheCount = 0;
+
+  function cachedCenterRoute(cacheKey, from, to, rects) {
+    var cached = routeCache[cacheKey];
+    if (cached !== undefined) return cached;
+    if (routeCacheCount > 400) { routeCache = {}; routeCacheCount = 0; }
+    var path = gridRoute(from.x, from.y, to.x, to.y, rects);
+    routeCache[cacheKey] = path || null;
+    routeCacheCount++;
+    return routeCache[cacheKey];
+  }
+
   function gridRoute(sx, sy, ex, ey, obstacles, limit) {
     if (!obstacles.length) return null;
     var xs = {}, ys = {};
@@ -325,7 +356,7 @@
     var closed = new Array(W * H);
     var open = [startIdx];
     g[startIdx] = 0;
-    var turnPenalty = 26;
+    var turnPenalty = 40;
     var cx0 = Math.min(sx, ex), cx1 = Math.max(sx, ex);
     var cy0 = Math.min(sy, ey), cy1 = Math.max(sy, ey);
     var midX = (sx + ex) / 2, midY = (sy + ey) / 2;
@@ -337,8 +368,9 @@
     }
 
     // 让路径尽量靠向两端点的中间，走线看起来是对称的，而不是贴着某一侧的组件
+    // （系数要小于转弯惩罚，否则会为了"靠近中间"多拐几个弯）
     function offMiddle(px, py) {
-      return Math.abs(px - midX) * 0.35 + Math.abs(py - midY) * 0.35;
+      return Math.abs(px - midX) * 0.3 + Math.abs(py - midY) * 0.3;
     }
 
     while (open.length) {
@@ -524,7 +556,11 @@
       offB = off * outwardSign(b, a, sideB);
     }
     var pa = offPort(a, sideA, offA), pb = offPort(b, sideB, offB);
+    var pa0 = G.portPoint(a, sideA), pb0 = G.portPoint(b, sideB);
     var da = stub(pa, sideA, stubLen), db = stub(pb, sideB, stubLen);
+    var da0 = stub(pa0, sideA, stubLen), db0 = stub(pb0, sideB, stubLen);
+    var shiftA = { x: pa.x - pa0.x, y: pa.y - pa0.y };
+    var shiftB = { x: pb.x - pb0.x, y: pb.y - pb0.y };
     var pts, bend = null;
 
     if (horizA && horizB) {
@@ -627,9 +663,40 @@
       needRoute = polylineHits(pts.slice(1, pts.length - 1), allRects);
     }
     if (needRoute) {
-      var grid = gridRoute(da.x, da.y, db.x, db.y, allRects);
+      // 两端偏移量相同的（端口相对的那种）先用中心线寻路，再把整条路径平移出平行线，
+      // 否则同一对组件的两根箭头会各自选中同一条通道、中间段叠在一起。
+      var uniform = Math.abs(shiftA.x - shiftB.x) < 1e-6 && Math.abs(shiftA.y - shiftB.y) < 1e-6;
+      var from = uniform ? da0 : da, to = uniform ? db0 : db;
+      // 同一对组件的两根箭头必须共用同一条中心线，否则它们会各选一条通道
+      var forward = (from.x + from.y * 1000) <= (to.x + to.y * 1000);
+      var a1 = forward ? from : to, b1 = forward ? to : from;
+      var canonKey = (opts.groupKey || edge.id) + '|' +
+        [a1.x, a1.y, b1.x, b1.y].map(function (v) { return Math.round(v * 10); }).join(',');
+      var base = cachedCenterRoute(canonKey, a1, b1, allRects);
+      var grid = base ? (forward ? base : base.slice().reverse()) : null;
       if (grid && grid.length > 1) {
-        pts = G.simplify([pa, da].concat(grid, [db, pb]));
+        var mag = Math.max(Math.abs(shiftA.x), Math.abs(shiftA.y));
+        if (uniform && mag > 0.5) {
+          // 两根箭头共用同一条中心线，但各往对角线方向错开：
+          // 只沿端口方向平移的话，折线的中间竖段会重叠。
+          var s = Math.abs(shiftA.y) >= Math.abs(shiftA.x) ? Math.sign(shiftA.y) : Math.sign(shiftA.x);
+          if (!s) s = 1;
+          var cands = [[s * mag, s * mag], [s * mag, -s * mag]];
+          var pick = cands[0];
+          var bestCross = Infinity;
+          for (var ci = 0; ci < cands.length; ci++) {
+            var oa = grid.map(function (p) { return { x: p.x + cands[ci][0], y: p.y + cands[ci][1] }; });
+            var ob = grid.map(function (p) { return { x: p.x - cands[ci][0], y: p.y - cands[ci][1] }; });
+            var n = crossCount(oa, ob);
+            if (n < bestCross) { bestCross = n; pick = cands[ci]; }
+          }
+          var routed = grid.map(function (p) { return { x: p.x + pick[0], y: p.y + pick[1] }; });
+          var first = routed[0], last = routed[routed.length - 1];
+          pts = G.simplify([pa, da, { x: first.x, y: da.y }]
+            .concat(routed, [{ x: last.x, y: db.y }, db, pb]));
+        } else {
+          pts = G.simplify([pa].concat(grid, [pb]));
+        }
         bend = null;
       }
     }
@@ -674,7 +741,8 @@
     var o = {
       offset: opts.offset || 0, slot: opts.slot || 0, stub: opts.stub,
       obstacles: opts.obstacles || obstaclesFor(edge, nodes),
-      avoidAll: opts.avoidAll || allRectsOf(nodes)
+      avoidAll: opts.avoidAll || allRectsOf(nodes),
+      groupKey: opts.groupKey || groupKeyOf(edge, nodes)
     };
     if (mode === 'straight') return straightGeom(a, b, edge, o);
     if (mode === 'curve') return curveGeom(a, b, edge, o);
