@@ -1432,6 +1432,7 @@
       if (store.redo()) { view.invalidateChrome(); render(); msg('已重做'); }
       return;
     }
+    if (mod && e.shiftKey && (key === 'c' || key === 'C')) { copyImageToClipboard(); return; }
     if (mod && (key === 'c' || key === 'C')) { doCopy(); return; }
     if (mod && (key === 'x' || key === 'X')) { doCopy(); store.deleteSelection(); store.commit(); render(); msg('已剪切'); return; }
     if (mod && (key === 'v' || key === 'V')) { doPaste(); return; }
@@ -1605,7 +1606,28 @@
     msg('已导出 SVG');
   }
 
-  function exportPng() {
+  /** 把画布渲染成 PNG，只放进剪贴板，不落任何本地文件。 */
+  function copyImageToClipboard() {
+    renderToPngBlob(function (png) {
+      if (!png) { msg('复制失败：无法生成图片', 'warn'); return; }
+      if (!navigator.clipboard || !navigator.clipboard.write || typeof window.ClipboardItem !== 'function') {
+        msg('这个浏览器不允许写图片到剪贴板，请改用「导出 PNG 图片」', 'warn');
+        return;
+      }
+      try {
+        navigator.clipboard.write([new window.ClipboardItem({ 'image/png': png })]).then(function () {
+          msg('图片已复制到剪贴板，可以直接粘贴');
+        }).catch(function (err) {
+          msg('复制到剪贴板被浏览器拒绝：' + ((err && err.message) || '权限限制'), 'warn');
+        });
+      } catch (err) {
+        msg('复制到剪贴板失败：' + ((err && err.message) || '不支持'), 'warn');
+      }
+    });
+  }
+
+  /** 把当前画布离屏渲染成 PNG（2 倍分辨率），全程在内存里。 */
+  function renderToPngBlob(done) {
     var svg = buildExportSvg();
     var source = new XMLSerializer().serializeToString(svg);
     var w = parseFloat(svg.getAttribute('width'));
@@ -1623,20 +1645,25 @@
       ctx.fillRect(0, 0, canvas.width, canvas.height);
       ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
       URL.revokeObjectURL(url);
-      if (canvas.toBlob) {
-        canvas.toBlob(function (b) {
-          if (b) { download('流程图-' + timestamp() + '.png', b); msg('已导出 PNG'); }
-          else msg('PNG 导出失败，请改用 SVG', 'warn');
-        }, 'image/png');
-      } else {
-        msg('当前浏览器不支持 PNG 导出，请改用 SVG', 'warn');
+      if (!canvas.toBlob) { done(null); return; }
+      try {
+        canvas.toBlob(function (png) { done(png); }, 'image/png');
+      } catch (err) {
+        done(null);
       }
     };
     img.onerror = function () {
       URL.revokeObjectURL(url);
-      msg('PNG 导出失败，请改用 SVG 导出', 'warn');
+      done(null);
     };
     img.src = url;
+  }
+
+  function exportPng() {
+    renderToPngBlob(function (png) {
+      if (png) { download('流程图-' + timestamp() + '.png', png); msg('已导出 PNG'); }
+      else msg('PNG 导出失败，请改用 SVG', 'warn');
+    });
   }
 
   function onFileChosen(e) {
@@ -1964,7 +1991,8 @@
     el('menu-export').addEventListener('click', function (e) {
       var kind = e.target && e.target.dataset ? e.target.dataset.export : null;
       hideMenus();
-      if (kind === 'svg') exportSvg();
+      if (kind === 'copy') copyImageToClipboard();
+      else if (kind === 'svg') exportSvg();
       else if (kind === 'png') exportPng();
       else if (kind === 'json') saveJsonFile();
     });

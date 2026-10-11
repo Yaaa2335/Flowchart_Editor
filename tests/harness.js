@@ -75,6 +75,11 @@
     check('网格底纹默认开启', q('#gridRect').getAttribute('fill') === 'url(#fdGrid)');
     report.info.zoom = st.view.zoom;
     report.info.bounds = JSON.stringify(app.contentBounds());
+    report.info.clipboard = JSON.stringify({
+      secureContext: window.isSecureContext,
+      clipboardApi: !!navigator.clipboard && !!navigator.clipboard.write,
+      clipboardItem: typeof window.ClipboardItem
+    });
 
     /* ---------- 2. 选中 ---------- */
     var g0 = nodeGroups()[0];
@@ -1386,14 +1391,62 @@
       }
       check('导出画布未被污染', (function () { try { canvas.toDataURL('image/png'); return true; } catch (e) { return false; } })());
       URL.revokeObjectURL(url);
-      importTest();
+      clipboardTest();
     };
     img.onerror = function () {
       check('导出的 SVG 可被浏览器渲染', false, 'Image 加载失败');
       URL.revokeObjectURL(url);
-      importTest();
+      clipboardTest();
     };
     img.src = url;
+  }
+
+  /* 复制图片到剪贴板：全程内存，不落本地文件 */
+  function clipboardTest() {
+    var calls = [];
+    var desc = Object.getOwnPropertyDescriptor(navigator, 'clipboard');
+    var OrigItem = window.ClipboardItem;
+    var origClick = HTMLAnchorElement.prototype.click;
+    try {
+      Object.defineProperty(navigator, 'clipboard', {
+        configurable: true,
+        value: { write: function (items) { calls.push(items); return Promise.resolve(); } }
+      });
+    } catch (err) {
+      check('可以替换剪贴板接口用于测试', false, err.message);
+    }
+    window.ClipboardItem = function (data) { this.data = data; };
+    var downloads = 0;
+    HTMLAnchorElement.prototype.click = function () { downloads++; };
+
+    document.getElementById('btn-export').click();
+    var items = qa('#menu-export button').filter(function (b) {
+      return b.getAttribute('data-export') === 'copy';
+    });
+    check('导出菜单里有「复制图片到剪贴板」', items.length === 1, items.length);
+    if (items[0]) items[0].click();
+
+    var tries = 0;
+    (function poll() {
+      if (!calls.length && ++tries < 250) { setTimeout(poll, 20); return; }
+      check('图片已写入剪贴板', calls.length === 1, calls.length);
+      var item = calls[0] && calls[0][0];
+      var blob = item && item.data && item.data['image/png'];
+      check('剪贴板里放的是 image/png', !!blob && blob.type === 'image/png',
+        blob ? blob.type : 'missing');
+      check('剪贴板里图片有实际内容', !!blob && blob.size > 1000, blob ? blob.size : 0);
+      check('复制到剪贴板不会下载文件', downloads === 0, downloads);
+      check('提示文字说明了已复制',
+        document.getElementById('stMessage').textContent.indexOf('剪贴板') >= 0,
+        document.getElementById('stMessage').textContent);
+      HTMLAnchorElement.prototype.click = origClick;
+      window.ClipboardItem = OrigItem;
+      try {
+        if (desc) Object.defineProperty(navigator, 'clipboard', desc);
+        else delete navigator.clipboard;
+      } catch (err) { /* 忽略 */ }
+      importTest();
+    })();
   }
 
   /* 用真实 FileReader 走一遍「打开 JSON 文件」流程 */
