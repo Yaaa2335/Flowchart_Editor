@@ -1,0 +1,8 @@
+# 测试/截图时生成的临时页面
+.browser-check.html
+.shot-*.html
+
+# 系统与编辑器产生的杂项
+.DS_Store
+Thumbs.db
+*.log
