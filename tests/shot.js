@@ -108,7 +108,20 @@ var SETUPS = {
     'var dt=new DataTransfer();' +
     'btn.dispatchEvent(new DragEvent("dragstart",{bubbles:true,dataTransfer:dt}));' +
     'board.dispatchEvent(new DragEvent("dragover",{bubbles:true,cancelable:true,' +
-    'clientX:b.left+b.width*0.45,clientY:b.top+b.height*0.4,dataTransfer:dt}));'
+    'clientX:b.left+b.width*0.45,clientY:b.top+b.height*0.4,dataTransfer:dt}));',
+  stackpair: 'var s=FD.__app; s.store.reset();' +
+    'var A=s.addShapeAt("terminator", 220, 160), B=s.addShapeAt("terminator", 220, 460);' +
+    'function link(x,y,fs,ts){var e=s.store.makeEdge(s.store.endpointNode(x.id,fs),' +
+    's.store.endpointNode(y.id,ts),"orthogonal"); e.style.biMode="separate"; s.store.addEdge(e); return e;}' +
+    'link(A,B,"r","l"); link(B,A,"l","r");' +
+    's.store.commit(); s.render(); s.fitView();',
+  ulimit: 'var s=FD.__app; s.store.reset();' +
+    'var A=s.addShapeAt("terminator", 200, 200), B=s.addShapeAt("process", 640, 200);' +
+    'function link(x,y,fs,ts){var e=s.store.makeEdge(s.store.endpointNode(x.id,fs),' +
+    's.store.endpointNode(y.id,ts),"orthogonal"); e.style.biMode="separate"; s.store.addEdge(e); return e;}' +
+    'var f=link(A,B,"b","b"), r=link(B,A,"b","b");' +
+    'f.bend={y:150}; r.bend={y:150};' +
+    's.store.commit(); s.render(); s.fitView();'
 };
 
 var CHROME = [

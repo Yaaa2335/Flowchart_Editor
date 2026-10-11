@@ -480,6 +480,64 @@ var gObV = R.edgeGeometry(obV, obNodesV, { stub: 20 });
 ok(!R.polylineHits(gObV.points, R.obstaclesFor(obV, obNodesV)),
   '竖直方向也会绕开中间的组件', JSON.stringify(gObV.points));
 
+/* ---- 把红色拐点拖到极限时，两根分开的箭头也不能被夹成一条 ---- */
+var BA = node('BA', 0, 100, 140, 60);
+var BB = node('BB', 400, 100, 160, 60);
+var bNodes = { BA: BA, BB: BB };
+var bf = mkEdge('bf', 'BA', 'BB', { from: { node: 'BA', port: 'b' }, to: { node: 'BB', port: 'b' } });
+var br = mkEdge('br', 'BB', 'BA', { from: { node: 'BB', port: 'b' }, to: { node: 'BA', port: 'b' } });
+bf.style.biMode = 'separate';
+br.style.biMode = 'separate';
+[240, 200, 170, 120, 60].forEach(function (by) {
+  bf.bend = { y: by };
+  br.bend = { y: by };
+  var layB = R.edgeLayout([bf, br], bNodes);
+  var g1 = R.edgeGeometry(bf, bNodes, { offset: layB.bf.offset, slot: layB.bf.slot, stub: 20 });
+  var g2 = R.edgeGeometry(br, bNodes, { offset: layB.br.offset, slot: layB.br.slot, stub: 20 });
+  var y1 = g1.points[1].y, y2 = g1.points[0].y === g1.points[1].y ? g2.points[1].y : g2.points[1].y;
+  ok(Math.abs(Math.abs(y1 - y2) - 20) < 0.5,
+    '把拐点拖到 y=' + by + ' 时两根仍保持 20px 间距', y1 + ' / ' + y2);
+});
+
+/* ---- 各种端口组合下，两根分开的箭头都不能长距离重合 ---- */
+function pairOverlapLen(portA, portB, ay, by) {
+  var PA = node('PA', 0, ay, 140, 60);
+  var PB = node('PB', 400, by, 160, 60);
+  var nodes = { PA: PA, PB: PB };
+  var f = mkEdge('pf', 'PA', 'PB', { from: { node: 'PA', port: portA }, to: { node: 'PB', port: portB } });
+  var r = mkEdge('pr', 'PB', 'PA', { from: { node: 'PB', port: portB }, to: { node: 'PA', port: portA } });
+  f.style.biMode = 'separate';
+  r.style.biMode = 'separate';
+  var lay = R.edgeLayout([f, r], nodes);
+  var g1 = R.edgeGeometry(f, nodes, { offset: lay.pf.offset, slot: lay.pf.slot, stub: 20 });
+  var g2 = R.edgeGeometry(r, nodes, { offset: lay.pr.offset, slot: lay.pr.slot, stub: 20 });
+  return overlapBetween(g1.points, g2.points);
+}
+function overlapBetween(p, q) {
+  var sum = 0;
+  for (var i = 1; i < p.length; i++) {
+    for (var j = 1; j < q.length; j++) {
+      var a = p[i - 1], b = p[i], c = q[j - 1], d = q[j];
+      var abx = b.x - a.x, aby = b.y - a.y, cdx = d.x - c.x, cdy = d.y - c.y;
+      if (Math.abs(abx * cdy - aby * cdx) > 1e-6) continue;
+      if (Math.abs((c.x - a.x) * aby - (c.y - a.y) * abx) > 1e-6) continue;
+      var len = Math.hypot(abx, aby) || 1;
+      var t0 = ((c.x - a.x) * abx + (c.y - a.y) * aby) / (len * len);
+      var t1 = ((d.x - a.x) * abx + (d.y - a.y) * aby) / (len * len);
+      var lo = Math.max(0, Math.min(t0, t1)), hi = Math.min(1, Math.max(t0, t1));
+      if ((hi - lo) * len > 2) sum += (hi - lo) * len;
+    }
+  }
+  return sum;
+}
+[[100, 100], [100, 40], [100, 180], [100, -40], [0, 300], [-100, 150]].forEach(function (pos) {
+  [['r', 'l'], ['b', 'b'], ['t', 't'], ['l', 'r']].forEach(function (ports) {
+    var ov = pairOverlapLen(ports[0], ports[1], pos[0], pos[1]);
+    ok(ov < 30, '端口 ' + ports.join('') + '、位置 ' + pos.join(',') + ' 时两根箭头不重合',
+      'overlap=' + Math.round(ov));
+  });
+});
+
 /* ---- 尾部最短直线 ---- */
 
 ok(Math.abs(R.requiredStub({ style: { strokeWidth: 1.8 } }, 16) - 24.8) < 1e-6,

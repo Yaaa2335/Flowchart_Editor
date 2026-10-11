@@ -1625,6 +1625,20 @@ input[type="color"]::-webkit-color-swatch { border: none; border-radius: 4px; }
     return out;
   }
 
+  /** 把一条折线变成"隔离带"：每段扩成一条细长矩形，用来逼另一根箭头走别的通道。 */
+  function bandRects(pts, r) {
+    var out = [];
+    for (var i = 1; i < pts.length; i++) {
+      var a = pts[i - 1], b = pts[i];
+      if (Math.abs(a.y - b.y) < 0.01) {
+        out.push({ x: Math.min(a.x, b.x), y: a.y - r, w: Math.abs(b.x - a.x), h: r * 2 });
+      } else if (Math.abs(a.x - b.x) < 0.01) {
+        out.push({ x: a.x - r, y: Math.min(a.y, b.y), w: r * 2, h: Math.abs(b.y - a.y) });
+      }
+    }
+    return out;
+  }
+
   /** 全部组件（含连线两端）的外扩矩形，供寻路时避免折回自己身上。 */
   function allRectsOf(nodes) {
     var out = [];
@@ -1928,18 +1942,27 @@ input[type="color"]::-webkit-color-swatch { border: none; border-radius: 4px; }
       // 用左右两个节点的相对高低来定，正反两根算出来是同一个值。
       var leftN = a.x <= b.x ? a : b, rightN = a.x <= b.x ? b : a;
       var dirSignX = (rightN.y + rightN.h / 2) >= (leftN.y + leftN.h / 2) ? 1 : -1;
-      // 手动拖过的转折点也要保留错位量，否则两根分开的箭头中间段会重合
-      var shiftX, baseX;
+      // 手动拖过的转折点也要保留错位量：先夹住"基准位置"，再加上错位量，
+      // 否则拖到极限时两根会被夹到同一个位置、重新叠在一起。
+      var midX = (winX.min + winX.max) / 2;
+      var shiftX, baseX, baseWinX;
       if (autoX != null) {
+        // 单侧约束：错位只往自由方向铺开，收紧的一侧不用留余量
         shiftX = (winX.tightHigh ? -1 : 1) * slot * PARALLEL_GAP;
         baseX = autoX - shiftX;
+        baseWinX = { min: winX.min, max: winX.max };
       } else {
+        // 两侧约束：两根往相反方向错开，两边各留出余量
         shiftX = -off * dirSignX;
-        baseX = (winX.min + winX.max) / 2;
+        baseX = midX;
+        var padX = Math.abs(shiftX);
+        baseWinX = { min: winX.min + padX, max: winX.max - padX };
+        if (baseWinX.min > baseWinX.max) { baseWinX.min = midX; baseWinX.max = midX; }
       }
-      var wantX = clampBend((edge.bend && isFinite(edge.bend.x) ? edge.bend.x : baseX) + shiftX, winX);
+      var useWinX = { min: baseWinX.min + shiftX, max: baseWinX.max + shiftX };
+      var wantX = clampBend(edge.bend && isFinite(edge.bend.x) ? edge.bend.x : baseX, baseWinX) + shiftX;
       var buildX = function (v) { return [pa, da, { x: v, y: da.y }, { x: v, y: db.y }, db, pb]; };
-      var resX = refineMiddle(buildX, wantX, winX, obstacles);
+      var resX = refineMiddle(buildX, wantX, useWinX, obstacles);
       pts = resX.pts;
       if (obstacles.length && polylineHits(pts, obstacles)) {
         var altH = detourH(pa, da, db, pb, obstacles);
@@ -1949,7 +1972,7 @@ input[type="color"]::-webkit-color-swatch { border: none; border-radius: 4px; }
         // 走廊太窄时不给手柄，避免出现"拖不动"的手柄
         if (resX.pos != null && winX.max - winX.min > 1) {
           bend = {
-            kind: 'seg', axis: 'x', pos: resX.pos, min: winX.min, max: winX.max,
+            kind: 'seg', axis: 'x', pos: resX.pos, min: useWinX.min, max: useWinX.max,
             from: Math.min(da.y, db.y), to: Math.max(da.y, db.y)
           };
         }
@@ -1959,26 +1982,32 @@ input[type="color"]::-webkit-color-swatch { border: none; border-radius: 4px; }
       var autoY = oneSidedPos(winY, slot);
       var topN = a.y <= b.y ? a : b, bottomN = a.y <= b.y ? b : a;
       var dirSignY = (bottomN.x + bottomN.w / 2) >= (topN.x + topN.w / 2) ? 1 : -1;
-      var shiftY, baseY;
+      var midY = (winY.min + winY.max) / 2;
+      var shiftY, baseY, baseWinY;
       if (autoY != null) {
         shiftY = (winY.tightHigh ? -1 : 1) * slot * PARALLEL_GAP;
         baseY = autoY - shiftY;
+        baseWinY = { min: winY.min, max: winY.max };
       } else {
         shiftY = -off * dirSignY;
-        baseY = (winY.min + winY.max) / 2;
+        baseY = midY;
+        var padY = Math.abs(shiftY);
+        baseWinY = { min: winY.min + padY, max: winY.max - padY };
+        if (baseWinY.min > baseWinY.max) { baseWinY.min = midY; baseWinY.max = midY; }
       }
-      var wantY = clampBend((edge.bend && isFinite(edge.bend.y) ? edge.bend.y : baseY) + shiftY, winY);
+      var useWinY = { min: baseWinY.min + shiftY, max: baseWinY.max + shiftY };
+      var wantY = clampBend(edge.bend && isFinite(edge.bend.y) ? edge.bend.y : baseY, baseWinY) + shiftY;
       var buildY = function (v) { return [pa, da, { x: da.x, y: v }, { x: db.x, y: v }, db, pb]; };
-      var resY = refineMiddle(buildY, wantY, winY, obstacles);
+      var resY = refineMiddle(buildY, wantY, useWinY, obstacles);
       pts = resY.pts;
       if (obstacles.length && polylineHits(pts, obstacles)) {
         var altV = detourV(pa, da, db, pb, obstacles);
         if (altV) { pts = altV; resY.pos = null; }
       }
       if (Math.abs(da.x - db.x) > 1) {
-        if (resY.pos != null && winY.max - winY.min > 1) {
+        if (resY.pos != null && useWinY.max - useWinY.min > 1) {
           bend = {
-            kind: 'seg', axis: 'y', pos: resY.pos, min: winY.min, max: winY.max,
+            kind: 'seg', axis: 'y', pos: resY.pos, min: useWinY.min, max: useWinY.max,
             from: Math.min(da.x, db.x), to: Math.max(da.x, db.x)
           };
         }
@@ -2030,25 +2059,27 @@ input[type="color"]::-webkit-color-swatch { border: none; border-radius: 4px; }
       var base = cachedCenterRoute(canonKey, a1, b1, allRects);
       var grid = base ? (forward ? base : base.slice().reverse()) : null;
       if (grid && grid.length > 1) {
-        var mag = Math.max(Math.abs(shiftA.x), Math.abs(shiftA.y));
-        if (uniform && mag > 0.5) {
-          // 两根箭头共用同一条中心线，但各往对角线方向错开：
-          // 只沿端口方向平移的话，折线的中间竖段会重叠。
-          var s = Math.abs(shiftA.y) >= Math.abs(shiftA.x) ? Math.sign(shiftA.y) : Math.sign(shiftA.x);
-          if (!s) s = 1;
-          var cands = [[s * mag, s * mag], [s * mag, -s * mag]];
-          var pick = cands[0];
-          var bestCross = Infinity;
+        var mag = Math.max(
+          Math.abs(shiftA.x) + Math.abs(shiftA.y),
+          Math.abs(shiftB.x) + Math.abs(shiftB.y)) / 2;
+        if (mag > 0.5) {
+          // 两根箭头共用同一条中心线，再沿对角线各自错开：
+          // 只沿端口方向平移的话，折线的中间段会重合；
+          // 符号取两端偏移量之和，保证正反两根算出来互为相反数。
+          var s2 = Math.sign(shiftA.x + shiftA.y + shiftB.x + shiftB.y);
+          if (!s2) s2 = 1;
+          var cands = [[s2 * mag, s2 * mag], [s2 * mag, -s2 * mag]];
+          var pick = cands[0], bestCross = Infinity;
           for (var ci = 0; ci < cands.length; ci++) {
             var oa = grid.map(function (p) { return { x: p.x + cands[ci][0], y: p.y + cands[ci][1] }; });
             var ob = grid.map(function (p) { return { x: p.x - cands[ci][0], y: p.y - cands[ci][1] }; });
-            var n = crossCount(oa, ob);
-            if (n < bestCross) { bestCross = n; pick = cands[ci]; }
+            var nC = crossCount(oa, ob);
+            if (nC < bestCross) { bestCross = nC; pick = cands[ci]; }
           }
-          var routed = grid.map(function (p) { return { x: p.x + pick[0], y: p.y + pick[1] }; });
-          var first = routed[0], last = routed[routed.length - 1];
-          pts = G.simplify([pa, da, { x: first.x, y: da.y }]
-            .concat(routed, [{ x: last.x, y: db.y }, db, pb]));
+          var moved = grid.map(function (p) { return { x: p.x + pick[0], y: p.y + pick[1] }; });
+          var f0 = moved[0], l0 = moved[moved.length - 1];
+          pts = G.simplify([pa, da, { x: f0.x, y: da.y }]
+            .concat(moved, [{ x: l0.x, y: db.y }, db, pb]));
         } else {
           pts = G.simplify([pa].concat(grid, [pb]));
         }
