@@ -35,7 +35,7 @@
         label: raw.label || '',
         style: {
           color: raw.color || '#5d6779', strokeWidth: 1.8, dash: raw.dash || '',
-          arrowEnd: true, arrowStart: !!raw.arrowStart
+          arrowEnd: true, arrowStart: !!raw.arrowStart, biMode: 'none'
         }
       };
     });

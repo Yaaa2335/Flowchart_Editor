@@ -19,7 +19,19 @@
   }
 
   function defaultEdgeStyle() {
-    return { color: '#5d6779', strokeWidth: 1.8, dash: '', arrowEnd: true, arrowStart: false };
+    return {
+      color: '#5d6779', strokeWidth: 1.8, dash: '',
+      arrowEnd: true, arrowStart: false, biMode: 'none'
+    };
+  }
+
+  function defaultSettings() {
+    return {
+      grid: true, gridStyle: 'line', gridSize: 20,
+      snapGrid: true, snapGuides: true, snapPorts: true,
+      threshold: 8, edgeMode: 'orthogonal', theme: 'light',
+      tailMin: 16, collapseLeft: false, collapseRight: false
+    };
   }
 
   function createStore() {
@@ -28,11 +40,7 @@
       edges: [],
       selection: { nodes: [], edges: [] },
       view: { x: 0, y: 0, zoom: 1 },
-      settings: {
-        grid: true, gridStyle: 'line', gridSize: 20,
-        snapGrid: true, snapGuides: true, snapPorts: true,
-        threshold: 8, edgeMode: 'orthogonal', theme: 'light'
-      }
+      settings: defaultSettings()
     };
 
     var past = [];
@@ -354,8 +362,12 @@
             strokeWidth: num(style.strokeWidth, def.strokeWidth),
             dash: style.dash == null ? '' : style.dash,
             arrowEnd: style.arrowEnd === undefined ? true : !!style.arrowEnd,
-            arrowStart: !!style.arrowStart
-          }
+            arrowStart: !!style.arrowStart,
+            // 兼容旧数据里的 biSeparate 布尔值
+            biMode: normalizeBiMode(style.biMode, style.biSeparate)
+          },
+          bend: normalizeBend(raw.bend),
+          labelPos: normalizePos(raw.labelPos)
         });
       });
       state.nodes = cleanNodes;
@@ -379,6 +391,28 @@
 
     function normalizePort(p) {
       return ['t', 'r', 'b', 'l', 'auto'].indexOf(p) >= 0 ? p : 'auto';
+    }
+
+    function normalizeBiMode(mode, legacySeparate) {
+      if (mode === 'none' || mode === 'overlap' || mode === 'separate') return mode;
+      if (legacySeparate === true) return 'separate';
+      return 'none';
+    }
+
+    /** 折线转折点的人工位置（只保留有效的轴）。 */
+    function normalizeBend(raw) {
+      if (!raw) return null;
+      var bx = num(raw.x, NaN), by = num(raw.y, NaN);
+      if (!isFinite(bx) && !isFinite(by)) return null;
+      return { x: isFinite(bx) ? bx : null, y: isFinite(by) ? by : null };
+    }
+
+    /** 人工摆放的标签位置。 */
+    function normalizePos(raw) {
+      if (!raw) return null;
+      var px = num(raw.x, NaN), py = num(raw.y, NaN);
+      if (!isFinite(px) || !isFinite(py)) return null;
+      return { x: px, y: py };
     }
 
     /** 端点规范化：挂在存在的组件上，或是带坐标的自由端点，否则丢弃。 */
@@ -419,6 +453,7 @@
   }
 
   window.FD.createStore = createStore;
+  window.FD.defaultSettings = defaultSettings;
   window.FD.defaultNodeStyle = defaultNodeStyle;
   window.FD.defaultEdgeStyle = defaultEdgeStyle;
 })();

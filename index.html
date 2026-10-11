@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-theme="light">
+<html lang="zh-CN" data-theme="light" class="preload">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -22,7 +22,7 @@
     <span class="divider"></span>
 
     <div class="tgroup">
-      <button class="btn" id="btn-new" title="新建空白画布 (Ctrl+Alt+N)">新建</button>
+      <button class="btn" id="btn-new" title="新建一个空白画板">新建画板</button>
       <button class="btn" id="btn-open" title="打开 JSON 文件">打开</button>
       <button class="btn" id="btn-save" title="保存为 JSON 文件 (Ctrl+S)">保存</button>
       <div class="menu-wrap">
@@ -70,6 +70,11 @@
       </button>
     </div>
   </header>
+
+  <div class="tabbar">
+    <div class="tabs" id="tabList"></div>
+    <button class="tab-add" id="btn-tab-add" title="新建画板">＋</button>
+  </div>
 
   <div class="subbar">
     <div class="tgroup segmented" id="toolGroup" role="tablist">
@@ -126,9 +131,12 @@
   <main class="workspace">
     <aside class="panel left" id="panelLeft">
       <div class="panel-head">
-        <span>组件库</span>
-        <button class="mini" id="btn-collapse-left" title="收起/展开面板">⇤</button>
+        <span class="panel-label">组件库</span>
+        <button class="panel-toggle" id="btn-collapse-left" title="收起 / 展开组件库" aria-expanded="true">
+          <svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true"><path d="M14.5 6 9 12l5.5 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
       </div>
+      <span class="panel-rail-label">组件库</span>
       <div class="panel-body">
         <div class="section">
           <input class="search" id="shapeSearch" type="search" placeholder="搜索组件…">
@@ -185,6 +193,13 @@
     </div>
 
     <aside class="panel right" id="panelRight">
+      <div class="panel-head">
+        <span class="panel-label">属性</span>
+        <button class="panel-toggle" id="btn-collapse-right" title="收起 / 展开属性面板" aria-expanded="true">
+          <svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true"><path d="M9.5 6 15 12l-5.5 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+      </div>
+      <span class="panel-rail-label">属性</span>
       <div class="panel-body">
 
         <div class="props" id="propsNone">
@@ -194,6 +209,7 @@
             <label class="field"><span>底纹</span><select id="cs-gridStyle"><option value="line">方格</option><option value="dot">点阵</option></select></label>
             <label class="field"><span>连线</span><select id="cs-edgeMode"><option value="orthogonal">折线</option><option value="straight">直线</option><option value="curve">曲线</option></select></label>
             <label class="field"><span>阈值</span><input type="number" id="cs-threshold" min="2" max="40" step="1" value="8"><em class="unit">px</em></label>
+            <label class="field"><span>尾线</span><input type="number" id="cs-tailMin" min="8" max="120" step="1" value="16"><em class="unit">px</em></label>
           </div>
           <div class="switch-list">
             <button class="chip wide on" id="cs-grid" role="switch" aria-checked="true"><i class="dot"></i>显示网格底纹</button>
@@ -201,7 +217,7 @@
             <button class="chip wide on" id="cs-guides" role="switch" aria-checked="true"><i class="dot"></i>智能参考线吸附</button>
             <button class="chip wide on" id="cs-ports" role="switch" aria-checked="true"><i class="dot"></i>箭头吸附到组件</button>
           </div>
-          <p class="tip">提示：勾选「智能参考线」后，拖动组件会与其他组件的边缘/中心自动对齐；关闭「吸附网格」可自由摆放。</p>
+          <p class="tip">提示：勾选「智能参考线」后，拖动组件会与其他组件的边缘/中心自动对齐；关闭「吸附网格」可自由摆放。「尾线」是箭头前后那段直线的最短长度，太小会让箭头压住转折点。</p>
         </div>
 
         <div class="props" id="propsNode" hidden>
@@ -276,6 +292,13 @@
             <button class="mini" id="ep-arrowEnd">末端箭头</button>
             <button class="mini" id="ep-arrowStart">起始箭头</button>
           </div>
+          <div class="section-head mt"><span>双向箭头</span></div>
+          <div class="row-inline">
+            <button class="mini" id="ep-bi-none" title="不做特殊处理：同向多根箭头自动错开，反向箭头自然重叠（各自箭头分列两端）">无</button>
+            <button class="mini" id="ep-bi-overlap" title="整条路径完全重合；当前只有单向箭头时会自动补上反向那根">重合</button>
+            <button class="mini" id="ep-bi-separate" title="分成内外两条互不交叉的走线；当前只有单向箭头时会自动补上反向那根">分开</button>
+          </div>
+          <p class="tip" id="ep-bi-tip">只在同一对组件之间有多根箭头时才起作用。</p>
           <div class="section-head mt"><span>端点连接</span></div>
           <div class="rows">
             <label class="field"><span>起点</span><select id="ep-from-port"><option value="auto">自动</option><option value="t">上</option><option value="r">右</option><option value="b">下</option><option value="l">左</option><option value="free">自由位置</option></select></label>
@@ -283,6 +306,7 @@
           </div>
           <div class="row-inline">
             <button class="mini" id="ep-reverse">反转方向</button>
+            <button class="mini" id="ep-reset-bend" title="把折线中途的转折点恢复为自动位置">重置折线</button>
           </div>
         </div>
 

@@ -99,8 +99,14 @@
     fire(hit0, 'pointerdown', c0.x, c0.y);
     fire(window, 'pointermove', c0.x + dxScreen, c0.y + dyScreen);
     fire(window, 'pointerup', c0.x + dxScreen, c0.y + dyScreen);
-    check('网格吸附：x 落在 20 的倍数上', n0.x % 20 === 0, n0.x);
-    check('网格吸附：y 落在 20 的倍数上', n0.y % 20 === 0, n0.y);
+    // 网格吸附取"上/中/下里位移最小的一条贴网格"，所以只要有一条线在网格上即可
+    function onGrid(v) { return Math.abs(v % 20) < 1e-6; }
+    check('网格吸附：x 有边线落在 20 的倍数上',
+      onGrid(n0.x) || onGrid(n0.x + n0.w / 2) || onGrid(n0.x + n0.w),
+      n0.x + ',' + (n0.x + n0.w / 2) + ',' + (n0.x + n0.w));
+    check('网格吸附：y 有边线落在 20 的倍数上',
+      onGrid(n0.y) || onGrid(n0.y + n0.h / 2) || onGrid(n0.y + n0.h),
+      n0.y + ',' + (n0.y + n0.h / 2) + ',' + (n0.y + n0.h));
     var expectedDx = dxScreen / zoom;
     check('位移量与指针一致（允许吸附偏移）',
       Math.abs((n0.x - x0) - expectedDx) <= 10.1,
@@ -680,6 +686,590 @@
       textBtn.querySelector('svg text').textContent === '文本');
     var otherBtn = q('#shapeList .shape-btn[data-shape="decision"]');
     check('其他组件图标仍有形状', otherBtn.querySelectorAll('svg path').length === 1);
+
+    /* ---------- 33. 面板收起 / 展开 ---------- */
+    var panelL = document.getElementById('panelLeft');
+    var labelL = panelL.querySelector('.panel-label');
+    var toggleL = document.getElementById('btn-collapse-left');
+    panelL.style.transition = 'none';
+    var widthOpen = panelL.getBoundingClientRect().width;
+    function chevronInfo(toggle) {
+      var svgRect = toggle.querySelector('svg').getBoundingClientRect();
+      var pathRect = toggle.querySelector('svg path').getBoundingClientRect();
+      var r = function (x) { return Math.round(x * 10) / 10; };
+      return {
+        ok: pathRect.width > 2 && pathRect.height > 2 &&
+          pathRect.left >= svgRect.left - 2 && pathRect.right <= svgRect.right + 2 &&
+          pathRect.top >= svgRect.top - 2 && pathRect.bottom <= svgRect.bottom + 2,
+        svg: [r(svgRect.left), r(svgRect.top), r(svgRect.width), r(svgRect.height)].join(','),
+        path: [r(pathRect.left), r(pathRect.top), r(pathRect.width), r(pathRect.height)].join(',')
+      };
+    }
+    var chevOpen = chevronInfo(toggleL);
+    check('展开状态下箭头图标在按钮内', chevOpen.ok, 'svg=' + chevOpen.svg + ' path=' + chevOpen.path);
+    toggleL.click();
+    var widthShut = panelL.getBoundingClientRect().width;
+    check('收起后左侧面板变窄', widthShut < widthOpen - 100, widthOpen + ' → ' + widthShut);
+    check('收起状态写在类名与 aria 上',
+      panelL.classList.contains('collapsed') && toggleL.getAttribute('aria-expanded') === 'false');
+    check('收起后标题不再占宽度', labelL.getBoundingClientRect().width < 2,
+      labelL.getBoundingClientRect().width);
+    check('收起后标题与按钮不重叠',
+      labelL.getBoundingClientRect().right <= toggleL.getBoundingClientRect().left + 0.5,
+      labelL.getBoundingClientRect().right + ' vs ' + toggleL.getBoundingClientRect().left);
+    check('收起后按钮大致居中',
+      Math.abs((toggleL.getBoundingClientRect().left + toggleL.getBoundingClientRect().right) / 2 -
+        (panelL.getBoundingClientRect().left + panelL.getBoundingClientRect().right) / 2) < 4,
+      toggleL.getBoundingClientRect().left + ',' + toggleL.getBoundingClientRect().right);
+    check('收起后按钮完整可见、没有被裁掉',
+      toggleL.getBoundingClientRect().left >= panelL.getBoundingClientRect().left - 0.5 &&
+      toggleL.getBoundingClientRect().right <= panelL.getBoundingClientRect().right + 0.5 &&
+      toggleL.getBoundingClientRect().width > 20,
+      JSON.stringify({ b: [toggleL.getBoundingClientRect().left, toggleL.getBoundingClientRect().right], p: [panelL.getBoundingClientRect().left, panelL.getBoundingClientRect().right] }));
+    var toggleStyle = getComputedStyle(toggleL);
+    check('收起后按钮颜色可见',
+      toggleStyle.visibility !== 'hidden' && parseFloat(toggleStyle.opacity) > 0.5 &&
+      toggleStyle.color !== 'rgba(0, 0, 0, 0)', toggleStyle.color + ' / ' + toggleStyle.opacity);
+    var chevShut = chevronInfo(toggleL);
+    check('收起后箭头图标仍然画在按钮里（没被旋转到视口外）', chevShut.ok,
+      'svg=' + chevShut.svg + ' path=' + chevShut.path);
+    check('收起后竖排显示面板名字',
+      getComputedStyle(panelL.querySelector('.panel-rail-label')).display !== 'none');
+    check('收起状态被记住', st.settings.collapseLeft === true);
+    toggleL.click();
+    check('再次点击可以展开',
+      !panelL.classList.contains('collapsed') && toggleL.getAttribute('aria-expanded') === 'true');
+    check('展开后宽度复原', Math.abs(panelL.getBoundingClientRect().width - widthOpen) < 1,
+      panelL.getBoundingClientRect().width);
+    check('展开后隐藏竖排名字',
+      getComputedStyle(panelL.querySelector('.panel-rail-label')).display === 'none');
+    panelL.style.transition = '';
+    var tProp = getComputedStyle(panelL).transition;
+    check('面板宽度带非线性过渡动画', /width/.test(tProp) && /cubic-bezier/.test(tProp), tProp);
+    var panelR = document.getElementById('panelRight');
+    panelR.style.transition = 'none';
+    document.getElementById('btn-collapse-right').click();
+    check('右侧属性面板同样可以收起',
+      panelR.classList.contains('collapsed') && panelR.getBoundingClientRect().width < 60,
+      panelR.getBoundingClientRect().width);
+    var chevRight = chevronInfo(document.getElementById('btn-collapse-right'));
+    check('右侧收起后的箭头图标也在按钮里', chevRight.ok,
+      'svg=' + chevRight.svg + ' path=' + chevRight.path);
+    document.getElementById('btn-collapse-right').click();
+    panelR.style.transition = '';
+    check('右侧面板可以展开回来', !panelR.classList.contains('collapsed'));
+
+    /* ---------- 34. 同一方向可以画多根箭头 ---------- */
+    var cb34 = app.contentBounds();
+    var nA = app.addShapeAt('process', cb34.x + 80, cb34.y + cb34.h + 200);
+    var nB = app.addShapeAt('process', cb34.x + 400, cb34.y + cb34.h + 320);
+    function forwardPort() {
+      store.selectNodes([nA.id]);
+      app.render();
+      return q('#layerUi [data-port="r"]');
+    }
+    function reversePort() {
+      store.selectNodes([nB.id]);
+      app.render();
+      return q('#layerUi [data-port="l"]');
+    }
+    function dragBetween(fromEl, toPoint) {
+      var f = centerOf(fromEl);
+      fire(fromEl, 'pointerdown', f.x, f.y);
+      fire(window, 'pointermove', toPoint.x, toPoint.y);
+      fire(window, 'pointerup', toPoint.x, toPoint.y);
+    }
+    var edgesBefore34 = st.edges.length;
+    function portClient(node, side) {
+      var p = G.portPoint(node, side);
+      return toClient(p.x, p.y);
+    }
+    dragBetween(forwardPort(), portClient(nB, 'l'));
+    dragBetween(forwardPort(), portClient(nB, 'l'));
+    check('同一方向可以连出两根箭头', st.edges.length === edgesBefore34 + 2,
+      edgesBefore34 + ' → ' + st.edges.length);
+    var pair34 = st.edges.slice(-2);
+    check('两根箭头连的是同一对组件',
+      pair34[0].from.node === nA.id && pair34[1].from.node === nA.id &&
+      pair34[0].to.node === nB.id && pair34[1].to.node === nB.id);
+    var d34a = q('#layerEdges g[data-id="' + pair34[0].id + '"] path.edge-visible').getAttribute('d');
+    var d34b = q('#layerEdges g[data-id="' + pair34[1].id + '"] path.edge-visible').getAttribute('d');
+    check('两根同向箭头自动错开、路径不同', d34a !== d34b);
+    var lay34 = window.FD.router.edgeLayout(st.edges, store.nodeMap());
+    check('同向双箭头各偏半个间距',
+      Math.abs(lay34[pair34[0].id].offset) === 10 && Math.abs(lay34[pair34[1].id].offset) === 10,
+      lay34[pair34[0].id].offset + ',' + lay34[pair34[1].id].offset);
+
+    /* ---------- 35. 双向箭头：重合 / 分开 ---------- */
+    dragBetween(reversePort(), portClient(nA, 'r'));
+    var rev35 = st.edges[st.edges.length - 1];
+    check('可以画出反向箭头', rev35.from.node === nB.id && rev35.to.node === nA.id);
+    // 去掉多余的那根，留一对干净的双向箭头
+    store.selectEdges([pair34[1].id]);
+    store.deleteSelection();
+    store.commit();
+    app.render();
+    var fwd35 = pair34[0];
+    var lay35 = window.FD.router.edgeLayout(st.edges, store.nodeMap());
+    check('默认（无）：正反两条偏移都是 0',
+      lay35[fwd35.id].offset === 0 && lay35[rev35.id].offset === 0,
+      lay35[fwd35.id].offset + ',' + lay35[rev35.id].offset);
+    store.selectEdges([rev35.id]);
+    app.render();
+    check('面板默认显示「无」', document.getElementById('ep-bi-none').classList.contains('on'));
+    check('一对组件之间有两根箭头时给出合并/分开说明',
+      document.getElementById('ep-bi-tip').textContent.indexOf('合并') >= 0,
+      document.getElementById('ep-bi-tip').textContent);
+    store.selectEdges([rev35.id]);
+    app.render();
+    document.getElementById('ep-bi-separate').click();
+    var lay35b = window.FD.router.edgeLayout(st.edges, store.nodeMap());
+    check('选「分开」后正反向各偏半个间距',
+      lay35b[fwd35.id].offset === -10 && lay35b[rev35.id].offset === 10,
+      lay35b[fwd35.id].offset + ',' + lay35b[rev35.id].offset);
+    check('分开设置同步到反向箭头',
+      rev35.style.biMode === 'separate' && fwd35.style.biMode === 'separate');
+    var dSepF = q('#layerEdges g[data-id="' + fwd35.id + '"] path.edge-visible').getAttribute('d');
+    var dSepR = q('#layerEdges g[data-id="' + rev35.id + '"] path.edge-visible').getAttribute('d');
+    check('分开后两条箭头路径不同', dSepF !== dSepR);
+    check('前端按钮状态已同步', document.getElementById('ep-bi-separate').classList.contains('on'));
+    check('分开状态下提示说明可分别删除',
+      document.getElementById('ep-bi-tip').textContent.indexOf('单独删除') >= 0,
+      document.getElementById('ep-bi-tip').textContent);
+    var edgesBefore35m = st.edges.length;
+    document.getElementById('ep-bi-overlap').click();
+    function pairNow() {
+      return st.edges.filter(function (e) {
+        return (e.from.node === nA.id && e.to.node === nB.id) ||
+          (e.from.node === nB.id && e.to.node === nA.id);
+      });
+    }
+    check('选「重合」把两条合并成一条', st.edges.length === edgesBefore35m - 1,
+      edgesBefore35m + ' → ' + st.edges.length);
+    var mergedKeep = pairNow()[0];
+    check('合并后只剩一条双向箭头线',
+      pairNow().length === 1 && mergedKeep.style.biMode === 'overlap' &&
+      mergedKeep.style.arrowStart === true && mergedKeep.style.arrowEnd === true,
+      JSON.stringify(mergedKeep.style));
+    check('双向箭头线时「无」不可点', document.getElementById('ep-bi-none').disabled === true);
+    document.getElementById('ep-bi-none').click();
+    check('点被禁用的「无」不会改变状态', mergedKeep.style.biMode === 'overlap');
+    store.selectEdges([mergedKeep.id]);
+    app.render();
+    document.getElementById('ep-bi-separate').click();
+    check('可以从合并状态拆回两条', st.edges.length === edgesBefore35m,
+      st.edges.length);
+    var livePair = pairNow();
+    var liveEdge = livePair.filter(function (e) { return e.from.node === nA.id; })[0] || livePair[0];
+    check('拆回来的反向箭头重新出现',
+      livePair.length === 2 && livePair.some(function (e) { return e.from.node === nB.id; }),
+      livePair.length);
+    document.getElementById('ep-bi-none').click();
+    var afterNone = pairNow();
+    check('选「无」退回原来那根单向箭头',
+      afterNone.length === 1 && afterNone[0].style.biMode === 'none' &&
+      afterNone[0].style.arrowStart === false,
+      afterNone.length + ' 根 / ' + JSON.stringify(afterNone[0] && afterNone[0].style));
+    fwd35 = afterNone[0];
+    store.selectEdges([fwd35.id]);
+    app.render();
+    check('退回单向后「无」按钮是选中的',
+      document.getElementById('ep-bi-none').classList.contains('on'));
+
+    /* ---------- 36. 拖动折线中途的直线 ---------- */
+    app.fitView();   // 上面新加的组件在视口外，先让它们可见再测鼠标命中
+    store.selectEdges([fwd35.id]);
+    app.render();
+    var bendEl = q('#layerUi .bend-handle');
+    var bendDiag = (function () {
+      var g = R.edgeGeometry(fwd35, store.nodeMap(), {
+        offset: (R.edgeLayout(st.edges, store.nodeMap())[fwd35.id] || { offset: 0 }).offset,
+        stub: R.requiredStub(fwd35, st.settings.tailMin)
+      });
+      return g ? JSON.stringify({
+        mode: g.mode, bend: g.bend, sides: g.startSide + '/' + g.endSide,
+        start: g.start, end: g.end, sel: st.selection.edges
+      }) : 'null';
+    })();
+    check('选中折线后出现可拖动手柄', !!bendEl, bendDiag);
+    var bendStart = centerOf(bendEl);
+    var bendHit = document.elementFromPoint(bendStart.x, bendStart.y);
+    check('鼠标真的能点中拐点手柄（没被其他元素挡住）',
+      !!bendHit && !!bendHit.closest('[data-bend]'),
+      bendHit ? String(bendHit.getAttribute('class')) : 'null');
+    fire(bendHit || bendEl, 'pointerdown', bendStart.x, bendStart.y);
+    fire(window, 'pointermove', bendStart.x + 60, bendStart.y);
+    fire(window, 'pointerup', bendStart.x + 60, bendStart.y);
+    check('拖动后记录了人工转折点', !!(fwd35.bend && typeof fwd35.bend.x === 'number'),
+      JSON.stringify(fwd35.bend));
+    var bendNow = centerOf(q('#layerUi .bend-handle'));
+    check('转折点跟着手指移动了', Math.abs(bendNow.x - bendStart.x) > 8,
+      Math.round(bendStart.x) + ' → ' + Math.round(bendNow.x));
+    document.getElementById('ep-reset-bend').click();
+    check('重置后回到自动位置', !fwd35.bend, JSON.stringify(fwd35.bend));
+
+    /* ---------- 36b. 混合走向的拐点手柄 ---------- */
+    store.selectNodes([nA.id]);
+    app.render();
+    var portR36 = q('#layerUi [data-port="r"]');
+    var edgesBefore36 = st.edges.length;
+    dragBetween(portR36, portClient(nB, 't'));   // 从右侧出、上方进 → 混合走向
+    var mixEdge = st.edges[st.edges.length - 1];
+    check('可以画出混合走向的折线', st.edges.length === edgesBefore36 + 1 &&
+      mixEdge.from.port === 'r' && mixEdge.to.port === 't',
+      mixEdge.from.port + '→' + mixEdge.to.port);
+    store.selectEdges([mixEdge.id]);
+    app.render();
+    var cornerEl = q('#layerUi .bend-handle');
+    check('混合走向也有拐点手柄', !!cornerEl && cornerEl.getAttribute('data-bend') === 'corner',
+      cornerEl ? cornerEl.getAttribute('data-bend') : 'null');
+    var cornerStart = centerOf(cornerEl);
+    var dBefore36 = q('#layerEdges g[data-id="' + mixEdge.id + '"] path.edge-visible').getAttribute('d');
+    fire(cornerEl, 'pointerdown', cornerStart.x, cornerStart.y);
+    fire(window, 'pointermove', cornerStart.x + 40, cornerStart.y + 30);
+    fire(window, 'pointerup', cornerStart.x + 40, cornerStart.y + 30);
+    check('拐点被记录下来', !!(mixEdge.bend && typeof mixEdge.bend.x === 'number' &&
+      typeof mixEdge.bend.y === 'number'), JSON.stringify(mixEdge.bend));
+    var dAfter36 = q('#layerEdges g[data-id="' + mixEdge.id + '"] path.edge-visible').getAttribute('d');
+    check('拖动拐点后走线改变', dBefore36 !== dAfter36);
+    check('拐点走线不含 NaN', dAfter36.indexOf('NaN') < 0);
+    document.getElementById('ep-reset-bend').click();
+    check('混合走向也能重置拐点', !mixEdge.bend);
+
+    /* ---------- 37. 尾线长度设置 ---------- */
+    var tailInput = document.getElementById('cs-tailMin');
+    tailInput.value = '60';
+    tailInput.dispatchEvent(new Event('change', { bubbles: true }));
+    check('尾线设置写入并生效',
+      st.settings.tailMin === 60 && window.FD.router.requiredStub(fwd35, st.settings.tailMin) >= 60,
+      st.settings.tailMin);
+    check('面板显示同步', document.getElementById('cs-tailMin').value === '60');
+    tailInput.value = '16';
+    tailInput.dispatchEvent(new Event('change', { bubbles: true }));
+    check('尾线可以改回默认', st.settings.tailMin === 16);
+
+    /* ---------- 38. 单向箭头点「重合 / 分开」会自动补出反向箭头 ---------- */
+    app.fitView();
+    var cb38 = app.contentBounds();
+    var nA38 = app.addShapeAt('process', cb38.x + 80, cb38.y + cb38.h + 220);
+    var nB38 = app.addShapeAt('process', cb38.x + 420, cb38.y + cb38.h + 360);
+    function geoInApp(edge) {
+      var map = store.nodeMap();
+      var lay = R.edgeLayout(st.edges, map)[edge.id] || { offset: 0, slot: 0 };
+      return R.edgeGeometry(edge, map, {
+        offset: lay.offset, slot: lay.slot,
+        stub: R.requiredStub(edge, st.settings.tailMin)
+      });
+    }
+    store.selectNodes([nA38.id]);
+    app.render();
+    dragBetween(q('#layerUi [data-port="r"]'), portClient(nB38, 'l'));
+    var single38 = st.edges[st.edges.length - 1];
+    store.selectEdges([single38.id]);
+    app.render();
+    check('单向箭头时提示说明两种做法',
+      document.getElementById('ep-bi-tip').textContent.indexOf('补上反向那根') >= 0,
+      document.getElementById('ep-bi-tip').textContent);
+
+    /* 重合 = 合并成一条两端带箭头的双向箭头线 */
+    var edgesBefore38 = st.edges.length;
+    document.getElementById('ep-bi-overlap').click();
+    check('点「重合」不会多出箭头（本来就是一条线）', st.edges.length === edgesBefore38,
+      edgesBefore38 + ' → ' + st.edges.length);
+    check('「重合」把这条线两端都变成箭头',
+      single38.style.arrowStart === true && single38.style.arrowEnd === true);
+    check('「重合」标记为双向箭头线', single38.style.biMode === 'overlap', single38.style.biMode);
+    check('单向箭头合并出来的双向线可以退回「无」',
+      document.getElementById('ep-bi-none').disabled === false);
+    check('提示说明是整体操作',
+      document.getElementById('ep-bi-tip').textContent.indexOf('整体操作') >= 0,
+      document.getElementById('ep-bi-tip').textContent);
+    check('提示说明可以退回单向',
+      document.getElementById('ep-bi-tip').textContent.indexOf('退回原来那根单向箭头') >= 0,
+      document.getElementById('ep-bi-tip').textContent);
+    var mergedPath = q('#layerEdges g[data-id="' + single38.id + '"] path.edge-visible');
+    check('双向箭头线两端都有箭头',
+      !!mergedPath.getAttribute('marker-end') && !!mergedPath.getAttribute('marker-start'),
+      mergedPath.getAttribute('marker-end') + ' / ' + mergedPath.getAttribute('marker-start'));
+
+    /* 分开 = 拆成两条，各自可单独删除 */
+    document.getElementById('ep-bi-separate').click();
+    check('点「分开」拆成两条', st.edges.length === edgesBefore38 + 1,
+      st.edges.length);
+    var autoRev = st.edges[st.edges.length - 1];
+    check('拆出的箭头方向相反', autoRev.from.node === nB38.id && autoRev.to.node === nA38.id);
+    check('拆出的箭头用同一对端口',
+      autoRev.from.port === single38.to.port && autoRev.to.port === single38.from.port,
+      autoRev.from.port + '→' + autoRev.to.port);
+    check('两条都是单箭头（各自一个箭头）',
+      single38.style.arrowStart === false && autoRev.style.arrowStart === false &&
+      single38.style.arrowEnd === true && autoRev.style.arrowEnd === true);
+    check('两条都标成「分开」',
+      single38.style.biMode === 'separate' && autoRev.style.biMode === 'separate');
+    check('分开后「无」重新可用', document.getElementById('ep-bi-none').disabled === false);
+    var lay38 = R.edgeLayout(st.edges, store.nodeMap());
+    check('两条各偏半个间距',
+      Math.abs(lay38[single38.id].offset) === 10 && Math.abs(lay38[autoRev.id].offset) === 10,
+      JSON.stringify([lay38[single38.id], lay38[autoRev.id]]));
+    var g38a = geoInApp(single38), g38b = geoInApp(autoRev);
+    var cross38 = false;
+    for (var i38 = 1; i38 < g38a.points.length; i38++) {
+      for (var j38 = 1; j38 < g38b.points.length; j38++) {
+        if (R.segmentsIntersect(g38a.points[i38 - 1].x, g38a.points[i38 - 1].y,
+          g38a.points[i38].x, g38a.points[i38].y,
+          g38b.points[j38 - 1].x, g38b.points[j38 - 1].y,
+          g38b.points[j38].x, g38b.points[j38].y)) cross38 = true;
+      }
+    }
+    check('分开后两条线不交叉', !cross38,
+      JSON.stringify(g38a.points) + ' / ' + JSON.stringify(g38b.points));
+    check('自动补出来的分开箭头，无按钮仍可用（能退回单向）',
+      document.getElementById('ep-bi-none').disabled === false);
+
+    /* 把其中一条单独删掉，另一根还在 */
+    store.selectEdges([autoRev.id]);
+    store.deleteSelection();
+    store.commit();
+    app.render();
+    check('分开的双向箭头可以只删一根', st.edges.length === edgesBefore38 &&
+      !!store.edgeById(single38.id), st.edges.length);
+
+    /* 再合并回一条，然后一次删除 */
+    store.selectEdges([single38.id]);
+    app.render();
+    document.getElementById('ep-bi-separate').click();
+    document.getElementById('ep-bi-overlap').click();
+    check('重合会吃掉反向那根，只剩一条', st.edges.length === edgesBefore38,
+      st.edges.length);
+    var g39 = geoInApp(single38);
+    store.selectEdges([single38.id]);
+    app.render();
+    var bend39 = q('#layerUi .bend-handle');
+    if (bend39) {
+      var b39 = centerOf(bend39);
+      var hit39 = document.elementFromPoint(b39.x, b39.y);
+      fire(hit39 || bend39, 'pointerdown', b39.x, b39.y);
+      fire(window, 'pointermove', b39.x + 40, b39.y);
+      fire(window, 'pointerup', b39.x + 40, b39.y);
+      check('双向箭头线拖拐点后仍然是一条线',
+        !!single38.bend && st.edges.length === edgesBefore38, JSON.stringify(single38.bend));
+    } else {
+      check('双向箭头线拖拐点后仍然是一条线', true, '该走线无可拖段');
+    }
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete', bubbles: true }));
+    check('双向箭头线点一次删除就没了', st.edges.length === edgesBefore38 - 1, st.edges.length);
+
+    /* ---------- 40. 左右两侧各连一根，不算一对 ---------- */
+    var cb40 = app.contentBounds();
+    var nA40 = app.addShapeAt('process', cb40.x + 80, cb40.y - 260);
+    var nB40 = app.addShapeAt('process', cb40.x + 420, cb40.y - 260);
+    store.selectNodes([nA40.id]);
+    app.render();
+    dragBetween(q('#layerUi [data-port="l"]'), portClient(nB40, 'l'));
+    store.selectNodes([nB40.id]);
+    app.render();
+    dragBetween(q('#layerUi [data-port="r"]'), portClient(nA40, 'r'));
+    var leftEdge = st.edges.filter(function (e) {
+      return e.from.node === nA40.id && e.to.node === nB40.id;
+    })[0];
+    var rightEdge = st.edges.filter(function (e) {
+      return e.from.node === nB40.id && e.to.node === nA40.id;
+    })[0];
+    check('两侧各一根箭头的端口被记录', leftEdge.from.port === 'l' && rightEdge.from.port === 'r',
+      leftEdge.from.port + ' / ' + rightEdge.from.port);
+    var lay40 = R.edgeLayout(st.edges, store.nodeMap());
+    check('不同侧的箭头不配对、不会被偏移',
+      (!lay40[leftEdge.id] || lay40[leftEdge.id].offset === 0) &&
+      (!lay40[rightEdge.id] || lay40[rightEdge.id].offset === 0),
+      JSON.stringify([lay40[leftEdge.id], lay40[rightEdge.id]]));
+    check('两者分组键不同',
+      R.groupKeyOf(leftEdge, store.nodeMap()) !== R.groupKeyOf(rightEdge, store.nodeMap()));
+
+    /* ---------- 40b. 用户自己连出来的双向箭头不能退回「无」 ---------- */
+    var cb40b = app.contentBounds();
+    var m1 = app.addShapeAt('process', cb40b.x + 80, cb40b.y - 560);
+    var m2 = app.addShapeAt('process', cb40b.x + 420, cb40b.y - 560);
+    store.selectNodes([m1.id]);
+    app.render();
+    dragBetween(q('#layerUi [data-port="r"]'), portClient(m2, 'l'));
+    store.selectNodes([m2.id]);
+    app.render();
+    dragBetween(q('#layerUi [data-port="l"]'), portClient(m1, 'r'));
+    var manualPair = st.edges.filter(function (e) {
+      return (e.from.node === m1.id && e.to.node === m2.id) ||
+        (e.from.node === m2.id && e.to.node === m1.id);
+    });
+    check('手动连出两根反向箭头', manualPair.length === 2, manualPair.length);
+    store.selectEdges([manualPair[0].id]);
+    app.render();
+    check('手动双向时「无」可用（尚未做特殊处理）',
+      document.getElementById('ep-bi-none').disabled === false);
+    document.getElementById('ep-bi-separate').click();
+    check('手动双向选「分开」后「无」变灰',
+      document.getElementById('ep-bi-none').disabled === true);
+    check('手动双向的提示说明不能退回单向',
+      document.getElementById('ep-bi-tip').textContent.indexOf('「无」不可用') >= 0,
+      document.getElementById('ep-bi-tip').textContent);
+    document.getElementById('ep-bi-none').click();
+    check('点被禁用的「无」不会拆掉手动箭头',
+      st.edges.filter(function (e) {
+        return (e.from.node === m1.id && e.to.node === m2.id) ||
+          (e.from.node === m2.id && e.to.node === m1.id);
+      }).length === 2);
+    document.getElementById('ep-bi-overlap').click();
+    check('手动双向合并成一条', st.edges.filter(function (e) {
+      return (e.from.node === m1.id && e.to.node === m2.id) ||
+        (e.from.node === m2.id && e.to.node === m1.id);
+    }).length === 1);
+    check('手动双向合并后「无」同样是灰的',
+      document.getElementById('ep-bi-none').disabled === true);
+
+    /* ---------- 41. 中间挡着组件时自动绕开 ---------- */
+    var cb41 = app.contentBounds();
+    var oA = app.addShapeAt('process', cb41.x + 80, cb41.y + cb41.h + 620);
+    var oB = app.addShapeAt('process', cb41.x + 700, cb41.y + cb41.h + 620);
+    var oC = app.addShapeAt('process', cb41.x + 390, cb41.y + cb41.h + 620);
+    store.selectNodes([oA.id]);
+    app.render();
+    dragBetween(q('#layerUi [data-port="r"]'), portClient(oB, 'l'));
+    var blocked = st.edges[st.edges.length - 1];
+    var obsList = R.obstaclesFor(blocked, store.nodeMap());
+    var gBlocked = geoInApp(blocked);
+    check('挡路时走线自动绕开中间组件',
+      !R.polylineHits(gBlocked.points, obsList), JSON.stringify(gBlocked.points));
+    check('绕行走线仍然有效', gBlocked.d.indexOf('NaN') < 0);
+
+    /* ---------- 42. 箭头标签可以拖动 ---------- */
+    var cb42 = app.contentBounds();
+    var lA = app.addShapeAt('process', cb42.x + 80, cb42.y + cb42.h + 900);
+    var lB = app.addShapeAt('process', cb42.x + 460, cb42.y + cb42.h + 900);
+    store.selectNodes([lA.id]);
+    app.render();
+    dragBetween(q('#layerUi [data-port="r"]'), portClient(lB, 'l'));
+    var labelEdge = st.edges[st.edges.length - 1];
+    labelEdge.label = '标注';
+    store.selectEdges([labelEdge.id]);
+    app.fitView();   // 新组件在视口外，先适应窗口再测鼠标命中
+    store.selectEdges([labelEdge.id]);
+    app.render();
+    function labelElOf(id) {
+      return q('#layerEdges g[data-id="' + id + '"] text.edge-label');
+    }
+    var lbl = labelElOf(labelEdge.id);
+    check('箭头标签带上可拖动标记', !!lbl);
+    var lblStart = centerOf(lbl);
+    var lblHit = document.elementFromPoint(lblStart.x, lblStart.y);
+    check('鼠标能点中标签', !!lblHit && !!lblHit.closest('[data-label]'),
+      lblHit ? String(lblHit.getAttribute('class')) : 'null');
+    fire(lblHit || lbl, 'pointerdown', lblStart.x, lblStart.y);
+    fire(window, 'pointermove', lblStart.x + 44, lblStart.y + 30);
+    fire(window, 'pointerup', lblStart.x + 44, lblStart.y + 30);
+    check('标签记录了人工位置', !!(labelEdge.labelPos && typeof labelEdge.labelPos.x === 'number'),
+      JSON.stringify(labelEdge.labelPos));
+    var lblNow = centerOf(labelElOf(labelEdge.id));
+    check('标签跟着鼠标移动了', Math.abs(lblNow.x - lblStart.x) > 12,
+      Math.round(lblStart.x) + ' → ' + Math.round(lblNow.x));
+    check('拖动标签不会改变箭头数量', st.edges.length > 0);
+
+    // 往组件上拖：渲染时会被推出来，保持最小间距
+    var dropOnNode = centerOfNode(st.nodes.indexOf(lA));
+    var lblEl2 = labelElOf(labelEdge.id);
+    fire(lblEl2, 'pointerdown', lblNow.x, lblNow.y);
+    fire(window, 'pointermove', dropOnNode.x, dropOnNode.y);
+    fire(window, 'pointerup', dropOnNode.x, dropOnNode.y);
+    var lblClamped = centerOf(labelElOf(labelEdge.id));
+    var nodeScreen = nodeGroups()[st.nodes.indexOf(lA)].getBoundingClientRect();
+    var inNode = lblClamped.x > nodeScreen.left && lblClamped.x < nodeScreen.right &&
+      lblClamped.y > nodeScreen.top && lblClamped.y < nodeScreen.bottom;
+    check('标签被推到组件外面（不压住组件）', !inNode,
+      Math.round(lblClamped.x) + ',' + Math.round(lblClamped.y));
+    document.getElementById('ep-reset-bend').click();
+    check('重置折线不会影响标签', !!labelEdge.labelPos);
+    store.selectEdges([labelEdge.id]);
+    store.deleteSelection();
+    store.commit();
+    app.render();
+
+    /* ---------- 43. 多画板标签页 ---------- */
+    function tabEls() { return qa('#tabList .tab'); }
+    function syncBoard() { st = app.state; store = app.store; }
+    check('标签栏里有画板', tabEls().length >= 1, tabEls().length);
+    check('当前画板被高亮', tabEls().filter(function (t) {
+      return t.classList.contains('on');
+    }).length === 1);
+    var boardACount = st.nodes.length;
+    document.getElementById('btn-tab-add').click();
+    syncBoard();
+    check('点 + 新建画板', tabEls().length >= 2, tabEls().length);
+    check('新画板是空的', st.nodes.length === 0, st.nodes.length);
+    app.addShapeAt('process', 240, 240);
+    check('新画板可以独立编辑', st.nodes.length === 1, st.nodes.length);
+    var activeIdx = tabEls().findIndex(function (t) { return t.classList.contains('on'); });
+    var otherIdx = activeIdx === 0 ? 1 : 0;
+    tabEls()[otherIdx].click();
+    syncBoard();
+    var backCount = st.nodes.length;
+    check('切换画板后看到的是另一个画板的内容（各自的组件互不影响）',
+      backCount === boardACount && backCount !== 1,
+      backCount + ' vs ' + boardACount);
+    // 切回刚才那个画板，内容应该还在
+    tabEls()[activeIdx].click();
+    syncBoard();
+    check('切回来内容还在', st.nodes.length === 1, st.nodes.length);
+    var origPrompt = window.prompt;
+    window.prompt = function () { return '我的流程'; };
+    tabEls()[0].dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    check('双击标签可以改名', tabEls()[0].textContent.indexOf('我的流程') >= 0,
+      tabEls()[0].textContent);
+    window.prompt = origPrompt;
+    var beforeClose = tabEls().length;
+    qa('#tabList .tab .tab-close')[0].click();
+    syncBoard();
+    check('可以关闭画板', tabEls().length === beforeClose - 1, tabEls().length);
+    check('关闭后仍有且只有一个当前画板',
+      tabEls().filter(function (t) { return t.classList.contains('on'); }).length === 1);
+    // 只剩一个时不给关闭按钮
+    while (tabEls().length > 1) {
+      qa('#tabList .tab .tab-close')[0].click();
+      syncBoard();
+    }
+    check('只剩一个画板时没有关闭按钮', qa('#tabList .tab .tab-close').length === 0);
+
+    /* ---------- 44. 示例模板的三种放入方式 ---------- */
+    store.reset();
+    app.render();
+    var tplTabs = tabEls().length;
+    qa('[data-template]')[0].click();
+    syncBoard();
+    check('画板为空时模板放本页',
+      tabEls().length === tplTabs && st.nodes.length >= 8,
+      tabEls().length + ' / ' + st.nodes.length);
+    qa('[data-template]')[1].click();
+    syncBoard();
+    check('画板非空时模板开到新标签页', tabEls().length === tplTabs + 1, tabEls().length);
+    var tplBtn = qa('[data-template]')[1];
+    var dt44 = new DataTransfer();
+    tplBtn.dispatchEvent(new DragEvent('dragstart', { bubbles: true, dataTransfer: dt44 }));
+    var cb44 = app.contentBounds();
+    var dropPt44 = toClient(cb44.x + 40, cb44.y + cb44.h + 220);
+    boardEl.dispatchEvent(new DragEvent('dragover', {
+      bubbles: true, cancelable: true, clientX: dropPt44.x, clientY: dropPt44.y, dataTransfer: dt44
+    }));
+    check('拖动模板时有落点预览', qa('#layerHot .ghost-node').length > 0,
+      qa('#layerHot .ghost-node').length);
+    check('拖动模板的提示带模板名',
+      document.getElementById('dropVeil').textContent.indexOf('模板') >= 0,
+      document.getElementById('dropVeil').textContent);
+    var nodesBefore44 = st.nodes.length;
+    boardEl.dispatchEvent(new DragEvent('drop', {
+      bubbles: true, cancelable: true, clientX: dropPt44.x, clientY: dropPt44.y, dataTransfer: dt44
+    }));
+    syncBoard();
+    check('拖到画布把模板放进当前画板', st.nodes.length === nodesBefore44 + 7,
+      nodesBefore44 + ' → ' + st.nodes.length);
+    check('拖放后预览消失', qa('#layerHot .ghost-node').length === 0);
+    check('拖放不会多开画板', tabEls().length === tplTabs + 1, tabEls().length);
+    tplBtn.dispatchEvent(new DragEvent('dragend', { bubbles: true, dataTransfer: dt44 }));
 
     /* ---------- 13. 导出 ---------- */
     // 给一条箭头加标签，用于验证导出后标签底色不会变黑

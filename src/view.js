@@ -123,6 +123,25 @@
     var wrapCache = new Map();
   var themeTextColor = null;
   var themeCanvasBg = null;
+  var MIN_LABEL_GAP = 12;
+  var currentNodes = [];
+
+  /** 标签不能压住组件：落在组件附近时推到外面，保持一点距离。 */
+  function clampLabelPos(pos, nodes) {
+    var p = { x: pos.x, y: pos.y };
+    for (var i = 0; i < nodes.length; i++) {
+      var r = G.expandRect(nodes[i], MIN_LABEL_GAP);
+      if (!G.pointInRect(p.x, p.y, r)) continue;
+      var dl = p.x - r.x, dr = r.x + r.w - p.x;
+      var dt = p.y - r.y, db = r.y + r.h - p.y;
+      var m = Math.min(dl, dr, dt, db);
+      if (m === dl) p.x = r.x;
+      else if (m === dr) p.x = r.x + r.w;
+      else if (m === dt) p.y = r.y;
+      else p.y = r.y + r.h;
+    }
+    return p;
+  }
 
   function cssVar(name, fallback) {
     var v = '';
@@ -256,18 +275,25 @@
 
       if (edge.label) {
         var w = G.textWidth(edge.label, 12) + 10;
+        var lp = edge.labelPos ? clampLabelPos(edge.labelPos, currentNodes) : geo.label;
         setAttrs(rec.labelBg, {
-          x: G.f(geo.label.x - w / 2), y: G.f(geo.label.y - 9),
+          x: G.f(lp.x - w / 2), y: G.f(lp.y - 9),
           width: G.f(w), height: 18, fill: uiCanvasBg()
         });
         setAttrs(rec.label, {
-          x: G.f(geo.label.x), y: G.f(geo.label.y),
+          x: G.f(lp.x), y: G.f(lp.y),
           'text-anchor': 'middle', 'font-family': FONT, fill: uiTextColor()
         });
         if (rec.label.textContent !== edge.label) rec.label.textContent = edge.label;
+        rec.label.setAttribute('data-label', edge.id);
+        rec.label.setAttribute('data-edge', edge.id);
+        rec.labelBg.setAttribute('data-label', edge.id);
+        rec.labelBg.setAttribute('data-edge', edge.id);
       } else {
         setAttrs(rec.labelBg, { width: 0, height: 0 });
         if (rec.label.textContent) rec.label.textContent = '';
+        rec.label.removeAttribute('data-label');
+        rec.labelBg.removeAttribute('data-label');
       }
     }
 
@@ -367,6 +393,29 @@
             }));
           }
         }
+
+        // 折线拐点手柄放在最后，保证压在其他操纵点之上、不会被挡住
+        for (var ej = 0; ej < state.selection.edges.length; ej++) {
+          var bgeo = ctx.edgeGeos && ctx.edgeGeos[state.selection.edges[ej]];
+          if (!bgeo || !bgeo.bend) continue;
+          var cornerH = bgeo.bend.kind === 'corner';
+          var hx = cornerH ? bgeo.bend.x
+            : (bgeo.bend.axis === 'x' ? bgeo.bend.pos : (bgeo.bend.from + bgeo.bend.to) / 2);
+          var hy = cornerH ? bgeo.bend.y
+            : (bgeo.bend.axis === 'x' ? (bgeo.bend.from + bgeo.bend.to) / 2 : bgeo.bend.pos);
+          var hpt = w2s({ x: hx, y: hy }, view);
+          var handle = mk('rect', {
+            class: 'bend-handle', x: G.f(hpt.x - 6.5), y: G.f(hpt.y - 6.5),
+            width: 13, height: 13, rx: 3,
+            'data-bend': cornerH ? 'corner' : bgeo.bend.axis,
+            'data-edge': state.selection.edges[ej],
+            style: 'cursor: ' + (cornerH ? 'move' : (bgeo.bend.axis === 'x' ? 'ew' : 'ns') + '-resize')
+          });
+          var hint = mk('title');
+          hint.textContent = cornerH ? '拖动调整折线拐点' : '拖动这根直线改变折线走位';
+          handle.appendChild(hint);
+          layerUi.appendChild(handle);
+        }
       }
     }
 
@@ -462,6 +511,7 @@
       applyGrid(state.settings, state.view);
 
       var nodes = state.nodes;
+      currentNodes = nodes;
       var map = {};
       var alive = {};
       var i, node;
@@ -487,9 +537,15 @@
       var aliveEdges = {};
       var edgeGeos = {};
       var edgeSlot = 0;
+      var offsets = R.edgeLayout(state.edges, map);
       for (i = 0; i < state.edges.length; i++) {
         var edge = state.edges[i];
-        var geo = R.edgeGeometry(edge, map);
+        var lay = offsets[edge.id] || { offset: 0, slot: 0 };
+        var geo = R.edgeGeometry(edge, map, {
+          offset: lay.offset,
+          slot: lay.slot,
+          stub: R.requiredStub(edge, state.settings.tailMin)
+        });
         if (!geo) continue;
         edgeGeos[edge.id] = geo;
         aliveEdges[edge.id] = true;
@@ -515,7 +571,9 @@
           .map(function (n) { return [n.id, n.x, n.y, n.w, n.h, n.locked ? 1 : 0]; }),
         state.selection.edges.map(function (id) {
           var g = edgeGeos[id];
-          return g ? [id, G.round2(g.start.x), G.round2(g.start.y), G.round2(g.end.x), G.round2(g.end.y)] : [id];
+          if (!g) return [id];
+          return [id, G.round2(g.start.x), G.round2(g.start.y), G.round2(g.end.x), G.round2(g.end.y),
+          g.bend ? JSON.stringify(g.bend) : null];
         }),
         ctx.hoverId || null, ctx.editing ? 1 : 0
       ]);

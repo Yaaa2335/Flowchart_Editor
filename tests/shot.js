@@ -35,6 +35,73 @@ var SETUPS = {
     'st.edges[st.edges.length-1].to={point:{x:n.x+n.w+260,y:n.y+n.h+300}};' +
     'st.edges[st.edges.length-1].label="自由终点";' +
     's.store.selectEdges([st.edges[st.edges.length-1].id]); s.render(); s.fitView();'
+  ,
+  collapsed: 'var s=FD.__app; document.getElementById("btn-collapse-left").click();' +
+    'document.getElementById("btn-collapse-right").click();',
+  parallel: 'var s=FD.__app; s.store.reset();' +
+    'var A=s.addShapeAt("process", 140, 110), B=s.addShapeAt("process", 520, 110);' +
+    'var C=s.addShapeAt("process", 140, 360), D=s.addShapeAt("process", 520, 360);' +
+    'function link(x,y,fs,ts){var e=s.store.makeEdge(s.store.endpointNode(x.id,fs),' +
+    's.store.endpointNode(y.id,ts),"orthogonal"); s.store.addEdge(e); return e;}' +
+    'link(A,B,"r","l"); link(A,B,"r","l");' +
+    'var f=link(C,D,"r","l"), r=link(D,C,"l","r");' +
+    'f.style.biSeparate=true; r.style.biSeparate=true;' +
+    'f.style.color="#2f6bff"; r.style.color="#e5484d";' +
+    's.store.commit(); s.render(); s.fitView();',
+  bend: 'var s=FD.__app; var st=s.state;' +
+    'var e=st.edges.filter(function(x){return x.from.node&&x.to.node;})[0];' +
+    's.store.selectEdges([e.id]); s.render();',
+  collapsed2: 'var s=FD.__app; document.getElementById("btn-collapse-left").click();' +
+    'document.getElementById("btn-collapse-right").click();',
+  topsplit: 'var s=FD.__app; s.store.reset();' +
+    'var A=s.addShapeAt("process", 200, 320), B=s.addShapeAt("process", 640, 320);' +
+    'function link(x,y,fs,ts){var e=s.store.makeEdge(s.store.endpointNode(x.id,fs),' +
+    's.store.endpointNode(y.id,ts),"orthogonal"); s.store.addEdge(e); return e;}' +
+    'var f=link(A,B,"t","t"), r=link(B,A,"t","t");' +
+    'f.style.biMode="separate"; r.style.biMode="separate";' +
+    'f.style.color="#2f6bff"; r.style.color="#e5484d";' +
+    's.store.commit(); s.render(); s.fitView();',
+  obstacle: 'var s=FD.__app; s.store.reset();' +
+    'var A=s.addShapeAt("process", 120, 220), B=s.addShapeAt("process", 860, 220),' +
+    'C=s.addShapeAt("process", 480, 220);' +
+    'var e=s.store.makeEdge(s.store.endpointNode(A.id,"auto"),' +
+    's.store.endpointNode(B.id,"auto"),"orthogonal");' +
+    'e.style.color="#e5484d"; s.store.addEdge(e);' +
+    's.store.commit(); s.render(); s.fitView();',
+  zsplit: 'var s=FD.__app; s.store.reset();' +
+    'var A=s.addShapeAt("process", 180, 160), B=s.addShapeAt("process", 620, 340);' +
+    'function link(x,y,fs,ts){var e=s.store.makeEdge(s.store.endpointNode(x.id,fs),' +
+    's.store.endpointNode(y.id,ts),"orthogonal"); s.store.addEdge(e); return e;}' +
+    'var f=link(A,B,"r","l"), r=link(B,A,"l","r");' +
+    'f.style.biMode="separate"; r.style.biMode="separate";' +
+    'f.style.color="#2f6bff"; r.style.color="#e5484d";' +
+    's.store.commit(); s.render(); s.fitView();',
+  detour: 'var s=FD.__app; s.store.reset();' +
+    'var A=s.addShapeAt("process", 120, 160), B=s.addShapeAt("process", 620, 300),' +
+    'C=s.addShapeAt("process", 380, 220);' +
+    'var e=s.store.makeEdge(s.store.endpointNode(A.id,"r"),' +
+    's.store.endpointNode(B.id,"t"),"orthogonal");' +
+    'e.style.color="#2e8b57"; e.style.strokeWidth=2; s.store.addEdge(e);' +
+    's.store.commit(); s.render(); s.fitView();',
+  topbot: 'var s=FD.__app; s.store.reset();' +
+    'var A=s.addShapeAt("process", 200, 260), B=s.addShapeAt("process", 620, 260);' +
+    'var e=s.store.makeEdge(s.store.endpointNode(A.id,"t"),' +
+    's.store.endpointNode(B.id,"b"),"orthogonal");' +
+    'e.style.color="#e5484d"; e.style.strokeWidth=2; s.store.addEdge(e);' +
+    's.store.commit(); s.render(); s.fitView();',
+  merged: 'var s=FD.__app; s.store.reset();' +
+    'var A=s.addShapeAt("process", 180, 180), B=s.addShapeAt("process", 620, 180);' +
+    'function link(x,y,fs,ts){var e=s.store.makeEdge(s.store.endpointNode(x.id,fs),' +
+    's.store.endpointNode(y.id,ts),"orthogonal"); s.store.addEdge(e); return e;}' +
+    'var m=link(A,B,"r","l"); m.style.arrowStart=true; m.style.biMode="overlap";' +
+    'var C=s.addShapeAt("process", 180, 400), D=s.addShapeAt("process", 620, 520);' +
+    'var f=link(C,D,"r","l"), r=link(D,C,"l","r");' +
+    'f.style.biMode="separate"; r.style.biMode="separate";' +
+    'f.style.color="#2f6bff"; r.style.color="#e5484d";' +
+    's.store.commit(); s.render(); s.fitView();',
+  multitab: 'var s=FD.__app; s.state.view={x:60,y:60,zoom:0.8}; s.render();' +
+    's.newBoard(); s.addShapeAt("decision", 320, 240); s.addShapeAt("process", 320, 420);' +
+    's.newBoard(); document.querySelectorAll("[data-template]")[1].click();'
 };
 
 var CHROME = [

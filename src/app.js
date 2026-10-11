@@ -10,9 +10,14 @@
   var STORAGE_SETTINGS = 'fd.settings.v1';
   var STORAGE_SHAPES = 'fd.customShapes.v1';
   var STORAGE_TEMPLATES = 'fd.templates.v1';
+  var STORAGE_TABS = 'fd.tabs.v1';
 
   var store = window.FD.createStore();
   var state = store.state;
+  var settings = state.settings;      // 全局设置，所有画板共用
+  var tabs = [];                      // 多画板：[{id, name, store}]
+  var activeTabId = null;
+  var draggingTemplate = null;
 
   function el(id) { return document.getElementById(id); }
   function closest(node, sel) { return node && node.closest ? node.closest(sel) : null; }
@@ -145,6 +150,7 @@
     });
     el('sel-grid-size').value = String(s.gridSize);
     el('cs-gridSize').value = s.gridSize;
+    el('cs-tailMin').value = s.tailMin;
     el('sel-grid-style').value = s.gridStyle;
     el('cs-gridStyle').value = s.gridStyle;
     el('cs-threshold').value = s.threshold;
@@ -167,8 +173,104 @@
   function scheduleAutosave() {
     if (saveTimer) clearTimeout(saveTimer);
     saveTimer = setTimeout(function () {
-      try { localStorage.setItem(STORAGE_DOC, JSON.stringify(store.serialize())); } catch (err) { /* 忽略 */ }
+      try {
+        localStorage.setItem(STORAGE_TABS, JSON.stringify({
+          active: activeTabId,
+          tabs: tabs.map(function (tab) {
+            return { id: tab.id, name: tab.name, data: tab.store.serialize() };
+          })
+        }));
+      } catch (err) { /* 忽略 */ }
     }, 700);
+  }
+
+  /* ---------------- 多画板（标签页） ---------------- */
+
+  function tabById(id) {
+    for (var i = 0; i < tabs.length; i++) if (tabs[i].id === id) return tabs[i];
+    return null;
+  }
+
+  function createTab(name, data, id) {
+    var s = window.FD.createStore();
+    s.state.settings = settings;
+    if (data) s.load(data, true);
+    var tab = { id: id || G.uid('tab'), name: name || ('画板 ' + (tabs.length + 1)), store: s };
+    tabs.push(tab);
+    return tab;
+  }
+
+  function activateTab(id) {
+    var tab = tabById(id);
+    if (!tab) return;
+    if (editing) commitEdit(true);
+    activeTabId = id;
+    store = tab.store;
+    state = store.state;
+    state.settings = settings;
+    applyTheme(settings.theme || 'light');
+    syncSettingsUI();
+    applyPanelState('left');
+    applyPanelState('right');
+    view.invalidateChrome();
+    view.invalidateOverlay();
+    renderTabs();
+    render();
+    scheduleAutosave();
+  }
+
+  function closeTab(id) {
+    if (tabs.length <= 1) { msg('至少要保留一个画板', 'warn'); return; }
+    var idx = -1;
+    tabs.forEach(function (tab, i) { if (tab.id === id) idx = i; });
+    if (idx < 0) return;
+    var wasActive = (id === activeTabId);
+    tabs.splice(idx, 1);
+    if (wasActive) activateTab(tabs[Math.min(idx, tabs.length - 1)].id);
+    else { renderTabs(); scheduleAutosave(); }
+    msg('已关闭画板');
+  }
+
+  function renameTab(id) {
+    var tab = tabById(id);
+    if (!tab) return;
+    var name = null;
+    try { name = window.prompt('画板名称：', tab.name); } catch (err) { name = null; }
+    if (name === null) return;
+    tab.name = String(name).trim().slice(0, 16) || tab.name;
+    renderTabs();
+    scheduleAutosave();
+  }
+
+  function renderTabs() {
+    var list = el('tabList');
+    if (!list) return;
+    list.innerHTML = '';
+    tabs.forEach(function (tab) {
+      var btn = document.createElement('button');
+      btn.className = 'tab' + (tab.id === activeTabId ? ' on' : '');
+      btn.title = tab.name + '（双击重命名）';
+      var nm = document.createElement('span');
+      nm.className = 'tab-name';
+      nm.textContent = tab.name;
+      btn.appendChild(nm);
+      if (tabs.length > 1) {
+        var x = document.createElement('span');
+        x.className = 'tab-close';
+        x.textContent = '×';
+        x.title = '关闭这个画板';
+        x.addEventListener('click', function (ev) {
+          ev.stopPropagation();
+          closeTab(tab.id);
+        });
+        btn.appendChild(x);
+      }
+      btn.addEventListener('click', function () {
+        if (tab.id !== activeTabId) activateTab(tab.id);
+      });
+      btn.addEventListener('dblclick', function () { renameTab(tab.id); });
+      list.appendChild(btn);
+    });
   }
 
   /* ---------------- 组件库 ---------------- */
@@ -511,6 +613,25 @@
       setVal('ep-to-port', edge.to.node ? (edge.to.port || 'auto') : 'free');
       toggleClass('ep-arrowEnd', edge.style.arrowEnd);
       toggleClass('ep-arrowStart', edge.style.arrowStart);
+      var biMode = edge.style.biMode || 'none';
+      toggleClass('ep-bi-none', biMode === 'none');
+      toggleClass('ep-bi-overlap', biMode === 'overlap');
+      toggleClass('ep-bi-separate', biMode === 'separate');
+      var merged = biMode === 'overlap';
+      var noneBtn = el('ep-bi-none');
+      var canRevert = biMode === 'none' || edge.style.biAuto === true;
+      noneBtn.disabled = !canRevert;
+      noneBtn.title = canRevert
+        ? '不做特殊处理：同向多根箭头自动错开，反向箭头自然重叠'
+        : '两端都是你自己连的箭头，不能自动退回单向；想变单向请先删掉其中一根';
+      el('ep-bi-tip').textContent = merged
+        ? '这是一条双向箭头线（两端都有箭头）：选中、拖动、删除都是整体操作；选「分开」会拆成两条可分别删除的箭头。' +
+          (canRevert ? '选「无」则退回原来那根单向箭头。' : '')
+        : groupEdgesOf(edge).length > 1
+          ? '同一对端口上有 ' + groupEdgesOf(edge).length + ' 根箭头，各自可单独删除：' +
+            '选「分开」让它们并排（互不交叉），选「重合」合并成一条两端带箭头的双向箭头线。' +
+            (canRevert ? '这两根是自动补出来的，选「无」会退回原来那根单向箭头。' : '两根都是你手动连的，所以「无」不可用。')
+          : '当前是单向箭头：「重合」把它变成两端带箭头的双向箭头线，「分开」会补上反向那根并排显示。';
     }
     syncing = false;
   }
@@ -676,13 +797,41 @@
 
     var anchorEl = closest(target, '[data-anchor]');
     if (anchorEl) {
+      var anchorEdgeId = anchorEl.getAttribute('data-edge');
       drag = {
-        type: 'edgeEnd', edgeId: anchorEl.getAttribute('data-edge'),
-        end: anchorEl.getAttribute('data-anchor'), target: null
+        type: 'edgeEnd', edgeId: anchorEdgeId,
+        end: anchorEl.getAttribute('data-anchor'), target: null,
+        offset: (R.edgeLayout(state.edges, store.nodeMap())[anchorEdgeId] || { offset: 0 }).offset
       };
       setCursor('crosshair');
       bindDragEvents();
       updateEdgeEnd(e);
+      return;
+    }
+
+    var bendEl = closest(target, '[data-bend]');
+    if (bendEl) {
+      var bendEdgeId = bendEl.getAttribute('data-edge');
+      var bendEdge = store.edgeById(bendEdgeId);
+      drag = {
+        type: 'bend', edgeId: bendEdgeId,
+        axis: bendEl.getAttribute('data-bend'),
+        group: bendEdge ? groupEdgesOf(bendEdge).map(function (item) { return item.id; }) : []
+      };
+      setCursor(drag.axis === 'x' ? 'ew' : 'ns');
+      bindDragEvents();
+      updateBend(e);
+      return;
+    }
+
+    var labelEl = closest(target, '[data-label]');
+    if (labelEl) {
+      var labelEdgeId = labelEl.getAttribute('data-label');
+      if (!store.isEdgeSelected(labelEdgeId)) store.selectEdges([labelEdgeId]);
+      drag = { type: 'label', edgeId: labelEdgeId };
+      setCursor('move');
+      bindDragEvents();
+      render();
       return;
     }
 
@@ -778,6 +927,8 @@
     else if (drag.type === 'pan') updatePan(e);
     else if (drag.type === 'connect') updateConnect(e);
     else if (drag.type === 'edgeEnd') updateEdgeEnd(e);
+    else if (drag.type === 'bend') updateBend(e);
+    else if (drag.type === 'label') updateLabel(e);
   }
 
   function updateMove(e) {
@@ -895,8 +1046,24 @@
     render();
   }
 
-  function connectPreview(fromRef, toRef) {
-    var geo = R.edgeGeometry({ from: fromRef, to: toRef, mode: state.settings.edgeMode }, store.nodeMap());
+  /** 统一入口：带上平行错位与尾部最小长度，保证各处算出来的路径一致。 */
+  function geoOfEdge(edge, edges) {
+    var map = store.nodeMap();
+    var offsets = R.edgeLayout(edges || state.edges, map);
+    var lay = offsets[edge.id] || { offset: 0, slot: 0 };
+    return R.edgeGeometry(edge, map, {
+      offset: lay.offset,
+      slot: lay.slot,
+      stub: R.requiredStub(edge, state.settings.tailMin)
+    });
+  }
+
+  function connectPreview(fromRef, toRef, offset) {
+    var geo = R.edgeGeometry(
+      { from: fromRef, to: toRef, mode: state.settings.edgeMode },
+      store.nodeMap(),
+      { offset: offset || 0 }
+    );
     return geo ? screenPath(geo) : null;
   }
 
@@ -929,7 +1096,7 @@
     var toRef = target
       ? store.endpointNode(target.node.id, target.side)
       : store.endpointPoint(pt.x, pt.y);
-    var path = connectPreview(fromRef, toRef);
+    var path = connectPreview(fromRef, toRef, drag.offset);
     view.setOverlay({
       view: state.view,
       ghost: path ? { path: path } : null,
@@ -965,6 +1132,70 @@
     });
   }
 
+  /** 拖动折线中途那根直线，自行决定它落在哪里。 */
+  function updateBend(e) {
+    var edge = store.edgeById(drag.edgeId);
+    if (!edge) return;
+    var w = pointerWorld(e);
+    var g = state.settings.gridSize;
+    function snap(v) {
+      return state.settings.snapGrid ? Math.round(v / g) * g : Math.round(v * 10) / 10;
+    }
+    // 同一对端口上的多根箭头作为一个整体一起挪，否则「重合」的一对会被拆开
+    var ids = (drag.group && drag.group.length) ? drag.group : [drag.edgeId];
+    ids.forEach(function (id) {
+      var item = store.edgeById(id);
+      if (!item) return;
+      if (!item.bend) item.bend = {};
+      if (drag.axis === 'corner') {
+        item.bend.x = snap(w.x);
+        item.bend.y = snap(w.y);
+      } else if (drag.axis === 'x') {
+        item.bend.x = snap(w.x);
+      } else {
+        item.bend.y = snap(w.y);
+      }
+    });
+    render();
+  }
+
+  function resetBend(edges) {
+    var list = edges || store.selectedEdges();
+    if (!list.length) return;
+    var ids = {};
+    list.forEach(function (e) {
+      groupEdgesOf(e).forEach(function (item) { ids[item.id] = true; });
+    });
+    Object.keys(ids).forEach(function (id) {
+      var item = store.edgeById(id);
+      if (item) delete item.bend;
+    });
+    store.commit();
+    render();
+    msg('折线转折点已恢复自动位置');
+  }
+
+  /** 拖动箭头标签：可以在箭头附近随便摆，但不能压住组件（渲染时还会再兜一次底）。 */
+  function updateLabel(e) {
+    var edge = store.edgeById(drag.edgeId);
+    if (!edge) return;
+    var w = pointerWorld(e);
+    edge.labelPos = { x: Math.round(w.x * 10) / 10, y: Math.round(w.y * 10) / 10 };
+    render();
+  }
+
+  function resetLabelPos(edges) {
+    var list = edges || store.selectedEdges();
+    if (!list.length) return;
+    list.forEach(function (item) {
+      var target = store.edgeById(item.id);
+      if (target) delete target.labelPos;
+    });
+    store.commit();
+    render();
+    msg('标签已回到箭头中间');
+  }
+
   function onPointerUp(e) {
     if (!drag) return;
     var d = drag;
@@ -974,7 +1205,7 @@
     view.setOverlay({ view: state.view });
     setCursor(null);
 
-    if (d.type === 'move' || d.type === 'resize') {
+    if (d.type === 'move' || d.type === 'resize' || d.type === 'bend' || d.type === 'label') {
       store.commit();
       render();
     } else if (d.type === 'connect') {
@@ -990,13 +1221,6 @@
     var toRef;
     if (d.target) {
       if (d.target.node.id === d.from) { msg('暂不支持连接自身'); render(); return; }
-      var existing = store.findEdge(d.from, d.target.node.id);
-      if (existing) {
-        store.selectEdges([existing.id]);
-        msg('这两个组件之间已有箭头');
-        render();
-        return;
-      }
       toRef = store.endpointNode(d.target.node.id, d.target.side);
     } else {
       if (!d.freePoint) { render(); return; }
@@ -1040,7 +1264,7 @@
     } else {
       var edge = store.edgeById(id);
       if (!edge) return;
-      var geo = R.edgeGeometry(edge, store.nodeMap());
+      var geo = geoOfEdge(edge);
       if (!geo) return;
       var p = view.w2s(geo.label, state.view);
       editor.style.left = (p.x - 70) + 'px';
@@ -1115,8 +1339,14 @@
   function contentBounds() {
     var rects = state.nodes.map(function (n) { return { x: n.x, y: n.y, w: n.w, h: n.h }; });
     var map = store.nodeMap();
+    var offsets = R.edgeLayout(state.edges, map);
     state.edges.forEach(function (edge) {
-      var geo = R.edgeGeometry(edge, map);
+      var lay = offsets[edge.id] || { offset: 0, slot: 0 };
+      var geo = R.edgeGeometry(edge, map, {
+        offset: lay.offset,
+        slot: lay.slot,
+        stub: R.requiredStub(edge, state.settings.tailMin)
+      });
       if (!geo) return;
       (geo.points || []).forEach(function (p) {
         rects.push({ x: p.x, y: p.y, w: 0, h: 0 });
@@ -1407,14 +1637,22 @@
     msg('已载入示例模板');
   }
 
-  function newDocument() {
-    if (state.nodes.length && !window.confirm('新建会清空当前画布，确定继续吗？')) return;
+  /** 新建画板：开一个新标签页，不动当前这张。 */
+  function newBoard() {
+    var tab = createTab('画板 ' + (tabs.length + 1));
+    activateTab(tab.id);
+    pill('新画板已创建，可在标签上双击改名');
+  }
+
+  /** 清空当前画板（标签页还在）。 */
+  function clearBoard() {
+    if (state.nodes.length && !window.confirm('清空当前画板？这一步可以撤销。')) return;
     store.reset();
     view.invalidateChrome();
     state.view = { x: 0, y: 0, zoom: 1 };
     fitView();
     render();
-    msg('已新建空白画布');
+    msg('已清空当前画板');
   }
 
   /* ---------------- 菜单 ---------------- */
@@ -1482,6 +1720,22 @@
       '-',
       { label: '编辑标签', run: function () { store.selectEdges([id]); render(); startEdit('edge', id); } },
       { label: '反转方向', run: function () { var f = edge.from; edge.from = edge.to; edge.to = f; store.commit(); render(); } },
+      { label: '重置折线位置', run: function () { store.selectEdges([id]); resetBend([edge]); } },
+      { label: '重置标签位置', run: function () { store.selectEdges([id]); resetLabelPos([edge]); } },
+      {
+        label: '合并为双向箭头线', active: edge.style.biMode === 'overlap',
+        run: function () {
+          store.selectEdges([id]);
+          setBiMode('overlap');
+        }
+      },
+      {
+        label: '拆分为两条并排箭头', active: edge.style.biMode === 'separate',
+        run: function () {
+          store.selectEdges([id]);
+          setBiMode('separate');
+        }
+      },
       '-',
       { label: '删除箭头', danger: true, run: function () { store.selectEdges([id]); store.deleteSelection(); store.commit(); render(); msg('已删除箭头'); } }
     ];
@@ -1502,6 +1756,9 @@
       { label: '粘贴', run: doPaste },
       { label: '全选', run: function () { store.selectAll(); render(); } },
       '-',
+      { label: '新建画板（新标签页）', run: newBoard },
+      { label: '清空当前画板', run: clearBoard },
+      '-',
       { label: '显示网格底纹', active: state.settings.grid, run: function () { setSetting('grid', !state.settings.grid); } },
       { label: '吸附到网格', active: state.settings.snapGrid, run: function () { setSetting('snapGrid', !state.settings.snapGrid); } },
       { label: '智能参考线', active: state.settings.snapGuides, run: function () { setSetting('snapGuides', !state.settings.snapGuides); } },
@@ -1512,6 +1769,27 @@
   }
 
   /* ---------------- 工具切换 ---------------- */
+
+  /* ---------------- 面板收起 / 展开 ---------------- */
+
+  function togglePanel(side) {
+    var key = side === 'left' ? 'collapseLeft' : 'collapseRight';
+    state.settings[key] = !state.settings[key];
+    applyPanelState(side);
+    saveSettings();
+    msg(state.settings[key]
+      ? (side === 'left' ? '组件库已收起' : '属性面板已收起')
+      : (side === 'left' ? '组件库已展开' : '属性面板已展开'));
+  }
+
+  function applyPanelState(side) {
+    var key = side === 'left' ? 'collapseLeft' : 'collapseRight';
+    var panel = el(side === 'left' ? 'panelLeft' : 'panelRight');
+    var btn = el(side === 'left' ? 'btn-collapse-left' : 'btn-collapse-right');
+    var collapsed = !!state.settings[key];
+    panel.classList.toggle('collapsed', collapsed);
+    if (btn) btn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+  }
 
   function setTool(name) {
     tool = name;
@@ -1564,16 +1842,54 @@
     wrap.addEventListener('dragover', function (e) {
       e.preventDefault();
       e.dataTransfer.dropEffect = 'copy';
-      el('dropVeil').hidden = false;
+      var veil = el('dropVeil');
+      var caption = veil.querySelector('span');
+      if (draggingTemplate) {
+        // 拖动示例模板时给出落点预览
+        var tpl = window.FD.templates.build(draggingTemplate.key);
+        var box = tpl ? G.unionRects(tpl.nodes) : null;
+        if (box) {
+          var pt = pointerWorld(e);
+          var ox = pt.x - (box.x + box.w / 2), oy = pt.y - (box.y + box.h / 2);
+          if (state.settings.snapGrid) {
+            var g = state.settings.gridSize;
+            ox = Math.round(ox / g) * g;
+            oy = Math.round(oy / g) * g;
+          }
+          view.setOverlay({
+            view: state.view,
+            ghost: { node: { x: box.x + ox, y: box.y + oy, w: box.w, h: box.h } }
+          });
+        }
+        if (caption) caption.textContent = '松开把模板「' + draggingTemplate.name + '」放到这里';
+      } else if (caption) {
+        caption.textContent = '松开以放置组件';
+      }
+      veil.hidden = false;
     });
     wrap.addEventListener('dragleave', function (e) {
       if (e.relatedTarget && wrap.contains(e.relatedTarget)) return;
       el('dropVeil').hidden = true;
+      view.setOverlay({ view: state.view });
     });
     wrap.addEventListener('drop', function (e) {
       e.preventDefault();
       el('dropVeil').hidden = true;
+      view.setOverlay({ view: state.view });
       var pt = pointerWorld(e);
+      var tplKey = e.dataTransfer.getData('text/fd-template-key') ||
+        (draggingTemplate && draggingTemplate.key);
+      draggingTemplate = null;
+      if (tplKey) {
+        var sample = window.FD.templates.build(tplKey);
+        if (sample) {
+          sample.name = (window.FD.templates.list.filter(function (t) {
+            return t.key === tplKey;
+          })[0] || {}).name || tplKey;
+          insertTemplate(sample, pt.x, pt.y);
+          return;
+        }
+      }
       var tplIdx = e.dataTransfer.getData('text/fd-template');
       if (tplIdx !== '' && tplIdx != null && !isNaN(parseInt(tplIdx, 10))) {
         var tpl = loadTemplates()[parseInt(tplIdx, 10)];
@@ -1600,7 +1916,8 @@
     window.addEventListener('resize', function () { render(); });
 
     /* 顶部工具条 */
-    el('btn-new').addEventListener('click', newDocument);
+    el('btn-new').addEventListener('click', newBoard);
+    el('btn-tab-add').addEventListener('click', newBoard);
     el('btn-open').addEventListener('click', openJsonFile);
     el('btn-save').addEventListener('click', saveJsonFile);
     el('fileInput').addEventListener('change', onFileChosen);
@@ -1658,6 +1975,9 @@
     el('cs-threshold').addEventListener('change', function () {
       setSetting('threshold', G.clamp(parseFloat(this.value) || 8, 2, 40));
     });
+    el('cs-tailMin').addEventListener('change', function () {
+      setSetting('tailMin', G.clamp(parseFloat(this.value) || 16, 8, 120));
+    });
     el('cs-edgeMode').addEventListener('change', function () { setSetting('edgeMode', this.value); });
     el('edgeModeGroup').addEventListener('click', function (e) {
       var seg = closest(e.target, '.seg');
@@ -1682,17 +2002,40 @@
     });
     el('btn-save-shape').addEventListener('click', saveCurrentAsCustom);
     el('btn-save-template').addEventListener('click', saveSelectionAsTemplate);
-    el('btn-collapse-left').addEventListener('click', function () {
-      var panel = el('panelLeft');
-      var body = panel.querySelector('.panel-body');
-      var hidden = body.style.display === 'none';
-      body.style.display = hidden ? '' : 'none';
-      panel.style.width = hidden ? '214px' : '44px';
-      this.textContent = hidden ? '⇤' : '⇥';
-      render();
+    el('btn-collapse-left').addEventListener('click', function () { togglePanel('left'); });
+    el('btn-collapse-right').addEventListener('click', function () { togglePanel('right'); });
+    ['panelLeft', 'panelRight'].forEach(function (id) {
+      el(id).addEventListener('transitionend', function (e) {
+        if (e.propertyName === 'width') render();
+      });
     });
     document.querySelectorAll('[data-template]').forEach(function (btn) {
-      btn.addEventListener('click', function () { loadTemplate(btn.dataset.template); });
+      var key = btn.dataset.template;
+      var name = btn.textContent.trim();
+      btn.draggable = true;
+      btn.title = '当前画板是空的就放在本页；否则新开一个画板。也可以直接拖到画布上放进当前画板。';
+      btn.addEventListener('click', function () {
+        if (state.nodes.length === 0) {
+          loadTemplate(key);
+          renderTabs();
+        } else {
+          var tab = createTab(name);
+          activateTab(tab.id);
+          loadTemplate(key);
+          renderTabs();
+          msg('已在新画板中打开「' + name + '」');
+        }
+      });
+      btn.addEventListener('dragstart', function (e) {
+        draggingTemplate = { key: key, name: name };
+        e.dataTransfer.setData('text/fd-template-key', key);
+        e.dataTransfer.effectAllowed = 'copy';
+      });
+      btn.addEventListener('dragend', function () {
+        draggingTemplate = null;
+        el('dropVeil').hidden = true;
+        view.setOverlay({ view: state.view });
+      });
     });
 
     /* 属性面板 */
@@ -1806,7 +2149,11 @@
     });
     bindToggle('ep-arrowStart', function () {
       var on = !(primaryEdge() || { style: {} }).style.arrowStart;
-      store.selectedEdges().forEach(function (e) { e.style.arrowStart = on; });
+      store.selectedEdges().forEach(function (e) {
+        e.style.arrowStart = on;
+        // 手动去掉起始箭头时，双向箭头线的标记也跟着取消，避免状态打架
+        if (!on && e.style.biMode === 'overlap') e.style.biMode = 'none';
+      });
     });
     el('ep-reverse').addEventListener('click', function () {
       store.selectedEdges().forEach(function (e) {
@@ -1817,6 +2164,103 @@
       store.commit();
       render();
     });
+    el('ep-bi-none').addEventListener('click', function () { setBiMode('none'); });
+    el('ep-bi-overlap').addEventListener('click', function () { setBiMode('overlap'); });
+    el('ep-bi-separate').addEventListener('click', function () { setBiMode('separate'); });
+    el('ep-reset-bend').addEventListener('click', function () { resetBend(); });
+  }
+
+  /** 找出一条箭头的反向伙伴：必须是同一对端口上的反向箭头。 */
+  function reverseEdgeOf(edge) {
+    if (!edge || !edge.from.node || !edge.to.node) return null;
+    var nodes = store.nodeMap();
+    var key = R.groupKeyOf(edge, nodes);
+    if (!key) return null;
+    for (var i = 0; i < state.edges.length; i++) {
+      var o = state.edges[i];
+      if (o.id !== edge.id && o.from.node === edge.to.node && o.to.node === edge.from.node &&
+        R.groupKeyOf(o, nodes) === key) return o;
+    }
+    return null;
+  }
+
+  /** 同一组（同一对端口）上的所有箭头。 */
+  function groupEdgesOf(edge) {
+    if (!edge) return [];
+    var nodes = store.nodeMap();
+    var key = R.groupKeyOf(edge, nodes);
+    if (!key) return [edge];
+    return state.edges.filter(function (o) { return R.groupKeyOf(o, nodes) === key; });
+  }
+
+  /** 多条箭头之间的画法：无 / 重合 / 分开（同步应用到反向那根）。 */
+  function setBiMode(mode) {
+    var edges = store.selectedEdges();
+    if (!edges.length) return;
+    var created = 0, merged = 0;
+    edges.forEach(function (edge) {
+      var usable = edge.from.node && edge.to.node && edge.from.node !== edge.to.node;
+      var rev = usable ? reverseEdgeOf(edge) : null;
+
+      if (mode === 'overlap') {
+        // 合并成一条双向箭头线：删掉反向那根，本根两端都带箭头
+        if (rev) {
+          if (!edge.label && rev.label) edge.label = rev.label;
+          store.removeEdges([rev.id]);
+          merged++;
+        }
+        // 反向那根是用户自己连的 → 不能退回单向；是我们自动补的 → 可以退回
+        edge.style.biAuto = !rev || rev.style.biAuto === true;
+        edge.style.biMode = 'overlap';
+        edge.style.arrowStart = true;
+        edge.style.arrowEnd = true;
+        return;
+      }
+
+      if (mode === 'separate') {
+        if (usable && !rev) {
+          // 只有单向箭头的：补一根反方向、走同一对端口的箭头
+          rev = store.makeEdge(
+            store.endpointNode(edge.to.node, edge.to.port),
+            store.endpointNode(edge.from.node, edge.from.port),
+            edge.mode
+          );
+          rev.style = JSON.parse(JSON.stringify(edge.style));
+          rev.label = '';
+          store.addEdge(rev);
+          created++;
+          rev.style.biAuto = true;
+          edge.style.biAuto = true;
+        }
+        edge.style.biMode = 'separate';
+        edge.style.arrowStart = false;
+        edge.style.arrowEnd = true;
+        if (rev) {
+          rev.style.biMode = 'separate';
+          rev.style.arrowStart = false;
+          rev.style.arrowEnd = true;
+        }
+        return;
+      }
+
+      // 无：只有"双向关系是我们自动补出来的"才能退回单向
+      if (edge.style.biAuto !== true) return;
+      if (edge.style.biMode === 'overlap') {
+        edge.style.biMode = 'none';
+        edge.style.arrowStart = false;
+        return;
+      }
+      if (rev) store.removeEdges([rev.id]);
+      edge.style.biMode = 'none';
+      edge.style.arrowStart = false;
+    });
+    store.commit();
+    render();
+    msg(mode === 'separate'
+      ? (created ? '已补上反向箭头，' : '') + '两条箭头并排分开，可分别删除'
+      : mode === 'overlap'
+        ? (merged ? '已把两根合并成一条双向箭头线' : '已改为两端带箭头的双向箭头线')
+        : '恢复普通单向箭头');
   }
 
   /** 端点连接方式：可以指定方向、脱离成自由位置。 */
@@ -1827,7 +2271,7 @@
       var ref = edge[end];
       if (value === 'free') {
         if (ref.node) {
-          var geo = R.edgeGeometry(edge, store.nodeMap());
+          var geo = geoOfEdge(edge);
           if (geo) {
             var p = end === 'from' ? geo.start : geo.end;
             edge[end] = store.endpointPoint(p.x, p.y);
@@ -1871,17 +2315,25 @@
   /* ---------------- 启动 ---------------- */
 
   function init() {
+    // 首屏应用布局状态时先禁用过渡，避免加载瞬间抖一下
+    var dropPreload = function () { document.documentElement.classList.remove('preload'); };
+    requestAnimationFrame(dropPreload);
+    setTimeout(dropPreload, 60);
+    settings = window.FD.defaultSettings();
     try {
       var raw = localStorage.getItem(STORAGE_SETTINGS);
       if (raw) {
         var saved = JSON.parse(raw);
-        for (var k in state.settings) {
-          if (Object.prototype.hasOwnProperty.call(saved, k)) state.settings[k] = saved[k];
+        for (var k in settings) {
+          if (Object.prototype.hasOwnProperty.call(saved, k)) settings[k] = saved[k];
         }
       }
     } catch (err) { /* 忽略 */ }
+    store.state.settings = settings;
 
-    applyTheme(state.settings.theme || 'light');
+    applyTheme(settings.theme || 'light');
+    applyPanelState('left');
+    applyPanelState('right');
     buildPalette();
     buildCustomList();
     buildTemplateList();
@@ -1889,35 +2341,55 @@
     syncSettingsUI();
     bindUI();
 
+    /* 恢复多画板；没有存档就建一个，并沿用旧版单画板存档 */
     var restored = false;
     try {
-      var docRaw = localStorage.getItem(STORAGE_DOC);
-      if (docRaw) {
-        var data = JSON.parse(docRaw);
-        if (data && data.nodes && data.nodes.length) {
-          store.load(data, true);
+      var rawTabs = localStorage.getItem(STORAGE_TABS);
+      if (rawTabs) {
+        var parsed = JSON.parse(rawTabs);
+        if (parsed && parsed.tabs && parsed.tabs.length) {
+          parsed.tabs.forEach(function (t) { createTab(t.name, t.data, t.id); });
+          activeTabId = tabById(parsed.active) ? parsed.active : tabs[0].id;
           restored = true;
         }
       }
     } catch (err) { /* 忽略 */ }
 
+    if (!restored) {
+      var legacy = null;
+      try {
+        var docRaw = localStorage.getItem(STORAGE_DOC);
+        if (docRaw) {
+          var data = JSON.parse(docRaw);
+          if (data && data.nodes && data.nodes.length) legacy = data;
+        }
+      } catch (err) { /* 忽略 */ }
+      var first = createTab('画板 1', legacy);
+      activeTabId = first.id;
+      restored = !!legacy;
+    }
+
     view.invalidateChrome();
+    activateTab(activeTabId);
     if (restored) {
-      render();
-      if (!state.nodes.length || state.view.x === 0 && state.view.y === 0) fitView();
       msg('已恢复上次编辑的内容');
     } else {
       loadTemplate('approval');
+      renderTabs();
       pill('试试拖动组件：会吸附到网格并对齐其他组件', 4200);
     }
-    render();
 
     // 调试/自动化测试钩子
     window.FD.__app = {
-      store: store, state: state, view: view, render: render,
+      // 用 getter 暴露，切换画板后始终指向当前画板
+      get store() { return store; },
+      get state() { return state; },
+      get tabs() { return tabs; },
+      view: view, render: render,
       setTool: setTool, setSetting: setSetting, addShapeAt: addShapeAt,
       fitView: fitView, zoomAt: zoomAt, contentBounds: contentBounds,
-      buildExportSvg: buildExportSvg, applyTheme: applyTheme, msg: msg
+      buildExportSvg: buildExportSvg, applyTheme: applyTheme, msg: msg,
+      newBoard: newBoard, clearBoard: clearBoard, activateTab: activateTab
     };
   }
 
